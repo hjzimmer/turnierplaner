@@ -27,6 +27,20 @@ function getGroupBlocksForPhase(phaseId, blocksByPhase) {
 }
 
 /**
+ * Returns a readable group display name with fallback to phase-local numbering.
+ * @param {object} groupBlock Group block object.
+ * @param {number} indexInPhase Zero-based index within the current phase group list.
+ * @returns {string} Display label for group selects.
+ */
+function getGroupDisplayName(groupBlock, indexInPhase) {
+  const explicitName = String(groupBlock?.block_name || "").trim();
+  if (explicitName) {
+    return explicitName;
+  }
+  return `Gruppe ${indexInPhase + 1}`;
+}
+
+/**
  * Returns only phases that contain at least one match block.
  * @param {Array<object>} allPhases Array of all phases.
  * @param {Map<number, Array<object>>} blocksByPhase Phase-id indexed blocks.
@@ -219,15 +233,15 @@ export function createPlacementSlotElement(entry, slotIndex, allTeams, allPhases
           const selectedPhaseId = Number(phaseSelect.value);
           const groupBlocks = getGroupBlocksForPhase(selectedPhaseId, blocksByPhase);
 
-          for (const groupBlock of groupBlocks) {
+          groupBlocks.forEach((groupBlock, groupIndex) => {
             const option = document.createElement("option");
             option.value = String(groupBlock.id);
-            option.textContent = groupBlock.block_name || `Gruppe ${groupBlock.id}`;
+            option.textContent = getGroupDisplayName(groupBlock, groupIndex);
             if (Number(entry.entry_source_id) === Number(groupBlock.id)) {
               option.selected = true;
             }
             groupSelect.appendChild(option);
-          }
+          });
 
           populatePositions();
         };
@@ -302,7 +316,7 @@ export function renderPlacementsUI(mountPoint, placements, teamCount, allTeams, 
  * @param {Array<object>} allTeams Array of all teams.
  * @param {Array<object>} allPhases Array of all phases.
  * @param {Map<number, Array<object>>} blocksByPhase Phase-id indexed blocks.
- * @returns {{suggestBtn: HTMLButtonElement, saveBtn: HTMLButtonElement, container: HTMLElement}} Rendered UI controls.
+ * @returns {{container: HTMLElement|null}} Rendered UI controls.
  */
 export function renderPlacementsUIWithBlocks(mountPoint, placements, teamCount, allTeams, allPhases, blocksByPhase) {
   mountPoint.innerHTML = "";
@@ -315,53 +329,12 @@ export function renderPlacementsUIWithBlocks(mountPoint, placements, teamCount, 
   `;
   mountPoint.appendChild(summary);
 
-  // Placements container
-  const container = document.createElement("div");
-  container.className = "placements-container";
-
-  if (placements.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "empty-message";
-    empty.textContent = "Keine Platzierungen definiert. Erstelle neue Platzierungen mit dem Button unten.";
-    container.appendChild(empty);
-  } else {
-    try {
-      for (let i = 0; i < placements.length; i += 1) {
-        const card = createPlacementCardElement(placements[i], i, allTeams, allPhases, blocksByPhase);
-        container.appendChild(card);
-      }
-    } catch (error) {
-      const errorMsg = document.createElement("p");
-      errorMsg.className = "error-message";
-      errorMsg.textContent = `Fehler beim Rendern der Platzierungen: ${error.message}`;
-      container.appendChild(errorMsg);
-    }
-  }
-
-  mountPoint.appendChild(container);
-
-  // Controls
-  const controls = document.createElement("div");
-  controls.className = "placements-controls";
-
-  const suggestBtn = document.createElement("button");
-  suggestBtn.className = "btn btn-secondary";
-  suggestBtn.textContent = "Platzierungen nach Teamanzahl generieren";
-  suggestBtn.type = "button";
-  controls.appendChild(suggestBtn);
-
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "btn btn-primary";
-  saveBtn.textContent = "Speichern";
-  saveBtn.type = "button";
-  controls.appendChild(saveBtn);
-
-  mountPoint.appendChild(controls);
-
-  const overview = createPlacementsOverview(placements, allTeams, allPhases);
+  const overview = createPlacementsOverview(placements, allTeams, allPhases, blocksByPhase);
   mountPoint.appendChild(overview);
 
-  return { suggestBtn, saveBtn, container };
+  const tableBody = overview.querySelector("tbody");
+
+  return { container: tableBody };
 }
 
 /**
@@ -370,67 +343,60 @@ export function renderPlacementsUIWithBlocks(mountPoint, placements, teamCount, 
  * @returns {Array<object>} Array of placement objects with entries.
  */
 export function readPlacementsFromUI(container) {
-  const placementCards = container.querySelectorAll(".placement-card");
+  const placementRows = container?.querySelectorAll(".placements-overview-row") || [];
   const placements = [];
 
-  for (const card of placementCards) {
-    const labelInput = card.querySelector(".placement-label-input");
-    const slotElements = card.querySelectorAll(".placement-slot");
+  for (const row of placementRows) {
+    const labelInput = row.querySelector(".placement-label-input");
+    const typeSelect = row.querySelector(".placement-entry-type-select");
+    const entryType = typeSelect?.value || "team";
 
-    const entries = [];
-    for (const slotEl of slotElements) {
-      const typeSelect = slotEl.querySelector(".placement-entry-type-select");
-      const entryType = typeSelect?.value || "team";
+    const entry = {
+      entry_type: entryType,
+    };
 
-      const entry = {
-        entry_type: entryType,
-      };
+    if (entryType === "team") {
+      const teamSelect = row.querySelector(".placement-team-select");
+      if (teamSelect?.value) {
+        entry.entry_team_name = teamSelect.value;
+      }
+    } else if (entryType === "group_rank" || entryType.includes("match")) {
+      const phaseSelect = row.querySelector(".placement-phase-select");
+      if (phaseSelect?.value) {
+        entry.entry_source_phase_id = Number(phaseSelect.value);
+      }
 
-      if (entryType === "team") {
-        const teamSelect = slotEl.querySelector(".placement-team-select");
-        if (teamSelect?.value) {
-          entry.entry_team_name = teamSelect.value;
-        }
-      } else if (entryType === "group_rank" || entryType.includes("match")) {
-        const phaseSelect = slotEl.querySelector(".placement-phase-select");
-        if (phaseSelect?.value) {
-          entry.entry_source_phase_id = Number(phaseSelect.value);
-        }
+      if (entryType === "group_rank") {
+        const groupSelect = row.querySelector(".placement-group-select");
+        const positionSelect = row.querySelector(".placement-group-position-select");
 
-        if (entryType === "group_rank") {
-          const groupSelect = slotEl.querySelector(".placement-group-select");
-          const positionSelect = slotEl.querySelector(".placement-group-position-select");
-
-          if (groupSelect?.value) {
-            entry.entry_source_id = Number(groupSelect.value);
-            const selectedGroupLabel = groupSelect.options[groupSelect.selectedIndex]?.textContent;
-            if (selectedGroupLabel) {
-              entry.entry_group_name = selectedGroupLabel;
-            }
+        if (groupSelect?.value) {
+          entry.entry_source_id = Number(groupSelect.value);
+          const selectedGroupLabel = groupSelect.options[groupSelect.selectedIndex]?.textContent;
+          if (selectedGroupLabel) {
+            entry.entry_group_name = selectedGroupLabel;
           }
+        }
 
-          if (positionSelect?.value) {
-            entry.entry_group_position = Number(positionSelect.value);
-          }
-        } else {
-          const matchSelect = slotEl.querySelector(".placement-match-select");
+        if (positionSelect?.value) {
+          entry.entry_group_position = Number(positionSelect.value);
+        }
+      } else {
+        const matchSelect = row.querySelector(".placement-match-select");
 
-          if (matchSelect?.value) {
-            entry.entry_source_id = Number(matchSelect.value);
-            const selectedMatchLabel = matchSelect.options[matchSelect.selectedIndex]?.textContent;
-            if (selectedMatchLabel) {
-              entry.entry_match_name = selectedMatchLabel;
-            }
+        if (matchSelect?.value) {
+          entry.entry_source_id = Number(matchSelect.value);
+          const selectedMatchLabel = matchSelect.options[matchSelect.selectedIndex]?.textContent;
+          if (selectedMatchLabel) {
+            entry.entry_match_name = selectedMatchLabel;
           }
         }
       }
-
-      entries.push(entry);
     }
 
     placements.push({
       position_label: labelInput?.value || `Place ${placements.length + 1}`,
-      entries,
+      entries: [entry],
     });
   }
 
@@ -442,9 +408,10 @@ export function readPlacementsFromUI(container) {
  * @param {Array<object>} placements Array of placements.
  * @param {Array<object>} allTeams Array of all teams.
  * @param {Array<object>} allPhases Array of all phases (with blocks data).
+ * @param {Map<number, Array<object>>} blocksByPhase Phase-id indexed blocks.
  * @returns {HTMLElement} Overview table element.
  */
-export function createPlacementsOverview(placements, allTeams, allPhases) {
+export function createPlacementsOverview(placements, allTeams, allPhases, blocksByPhase) {
   const overview = document.createElement("div");
   overview.className = "placements-overview";
 
@@ -461,51 +428,205 @@ export function createPlacementsOverview(placements, allTeams, allPhases) {
   headerRow.innerHTML = `
     <th>Platzierung</th>
     <th>Quelle</th>
+    <th>Team/Phase</th>
+    <th>Gruppe/Match</th>
+    <th>Position</th>
   `;
   thead.appendChild(headerRow);
   table.appendChild(thead);
 
   // Body
   const tbody = document.createElement("tbody");
-  for (const placement of placements) {
+  for (let placementIndex = 0; placementIndex < placements.length; placementIndex += 1) {
+    const placement = placements[placementIndex];
+    const entry = placement.entries && placement.entries.length > 0 ? placement.entries[0] : {};
     const row = document.createElement("tr");
     row.className = "placements-overview-row";
 
     const labelCell = document.createElement("td");
     labelCell.className = "placement-label-cell";
-    labelCell.textContent = placement.position_label || "Unknown";
+    const labelInput = document.createElement("input");
+    labelInput.type = "text";
+    labelInput.className = "placement-label-input";
+    labelInput.placeholder = `Platzierung ${placementIndex + 1}`;
+    labelInput.value = placement.position_label || `Place ${placementIndex + 1}`;
+    labelCell.appendChild(labelInput);
 
     const sourceCell = document.createElement("td");
     sourceCell.className = "placement-source-cell";
+    const typeSelect = document.createElement("select");
+    typeSelect.className = "placement-entry-type-select";
+    typeSelect.innerHTML = `
+      <option value="team">Team (direkt)</option>
+      <option value="group_rank">Gruppe Position</option>
+      <option value="match_winner">Match Gewinner</option>
+      <option value="match_loser">Match Verlierer</option>
+    `;
+    typeSelect.value = entry.entry_type || "team";
+    sourceCell.appendChild(typeSelect);
 
-    if (placement.entries && placement.entries.length > 0) {
-      const entry = placement.entries[0];
-      let sourceText = "Keine Quelle";
+    const teamPhaseCell = document.createElement("td");
+    teamPhaseCell.className = "placement-variant-cell";
 
-      if (entry.entry_type === "team" && entry.entry_team_name) {
-        sourceText = `Team: ${entry.entry_team_name}`;
-      } else if (entry.entry_type === "group_rank" && entry.entry_source_phase_id) {
-        const phase = allPhases.find((p) => p.id === entry.entry_source_phase_id);
-        const groupName = entry.entry_group_name || `Gruppe ${entry.entry_source_id || "?"}`;
-        const position = entry.entry_group_position || "?";
-        sourceText = `${groupName} aus Phase "${phase?.name || "Unknown"}" - Platz ${position}`;
-      } else if (entry.entry_type === "match_winner" && entry.entry_source_phase_id) {
-        const phase = allPhases.find((p) => p.id === entry.entry_source_phase_id);
-        const matchName = entry.entry_match_name || (entry.entry_source_id ? `Match ${entry.entry_source_id}` : "Match ?");
-        sourceText = `${matchName} Gewinner aus Phase "${phase?.name || "Unknown"}"`;
-      } else if (entry.entry_type === "match_loser" && entry.entry_source_phase_id) {
-        const phase = allPhases.find((p) => p.id === entry.entry_source_phase_id);
-        const matchName = entry.entry_match_name || (entry.entry_source_id ? `Match ${entry.entry_source_id}` : "Match ?");
-        sourceText = `${matchName} Verlierer aus Phase "${phase?.name || "Unknown"}"`;
+    const groupMatchCell = document.createElement("td");
+    groupMatchCell.className = "placement-variant-cell";
+
+    const positionCell = document.createElement("td");
+    positionCell.className = "placement-variant-cell";
+
+    /**
+     * Clears a variant cell and shows an empty placeholder.
+     * @param {HTMLTableCellElement} cell Table cell to reset.
+     * @returns {void}
+     */
+    function setEmptyCell(cell) {
+      cell.innerHTML = "";
+      const placeholder = document.createElement("span");
+      placeholder.className = "placement-empty-cell";
+      placeholder.textContent = "-";
+      cell.appendChild(placeholder);
+    }
+
+    /**
+     * Renders variant-specific selectors for one placement row.
+     * @returns {void}
+     */
+    function renderVariantControls() {
+      teamPhaseCell.innerHTML = "";
+      groupMatchCell.innerHTML = "";
+      positionCell.innerHTML = "";
+
+      const selectedType = typeSelect.value;
+
+      if (selectedType === "team") {
+        const teamSelect = document.createElement("select");
+        teamSelect.className = "placement-team-select";
+        teamSelect.innerHTML = '<option value="">-- Team --</option>';
+
+        for (const team of allTeams) {
+          const option = document.createElement("option");
+          option.value = team.name;
+          option.textContent = team.name;
+          if (entry.entry_team_name === team.name) {
+            option.selected = true;
+          }
+          teamSelect.appendChild(option);
+        }
+
+        teamPhaseCell.appendChild(teamSelect);
+        setEmptyCell(groupMatchCell);
+        setEmptyCell(positionCell);
+        return;
       }
 
-      sourceCell.textContent = sourceText;
-    } else {
-      sourceCell.textContent = "Nicht definiert";
+      const phaseSelect = document.createElement("select");
+      phaseSelect.className = "placement-phase-select";
+      phaseSelect.innerHTML = '<option value="">-- Phase --</option>';
+
+      const phases = selectedType === "group_rank"
+        ? getGroupPhaseOptions(allPhases, blocksByPhase)
+        : getMatchPhaseOptions(allPhases, blocksByPhase);
+
+      for (const phase of phases) {
+        const option = document.createElement("option");
+        option.value = String(phase.id);
+        option.textContent = phase.name;
+        if (Number(entry.entry_source_phase_id) === phase.id) {
+          option.selected = true;
+        }
+        phaseSelect.appendChild(option);
+      }
+
+      teamPhaseCell.appendChild(phaseSelect);
+
+      if (selectedType === "group_rank") {
+        const groupSelect = document.createElement("select");
+        groupSelect.className = "placement-group-select";
+
+        const positionSelect = document.createElement("select");
+        positionSelect.className = "placement-group-position-select";
+
+        const populatePositions = () => {
+          positionSelect.innerHTML = '<option value="">-- Pos --</option>';
+          const selectedGroupId = Number(groupSelect.value);
+          const selectedPhaseId = Number(phaseSelect.value);
+          const groupBlocks = getGroupBlocksForPhase(selectedPhaseId, blocksByPhase);
+          const selectedGroup = groupBlocks.find((block) => Number(block.id) === selectedGroupId);
+          const slotCount = Math.max(2, Number(selectedGroup?.teams_per_group) || 4);
+
+          for (let position = 1; position <= slotCount; position += 1) {
+            const option = document.createElement("option");
+            option.value = String(position);
+            option.textContent = String(position);
+            if (Number(entry.entry_group_position) === position) {
+              option.selected = true;
+            }
+            positionSelect.appendChild(option);
+          }
+        };
+
+        const populateGroups = () => {
+          groupSelect.innerHTML = '<option value="">-- Gruppe --</option>';
+          const selectedPhaseId = Number(phaseSelect.value);
+          const groupBlocks = getGroupBlocksForPhase(selectedPhaseId, blocksByPhase);
+
+          groupBlocks.forEach((groupBlock, groupIndex) => {
+            const option = document.createElement("option");
+            option.value = String(groupBlock.id);
+            option.textContent = getGroupDisplayName(groupBlock, groupIndex);
+            if (Number(entry.entry_source_id) === Number(groupBlock.id)) {
+              option.selected = true;
+            }
+            groupSelect.appendChild(option);
+          });
+
+          populatePositions();
+        };
+
+        phaseSelect.addEventListener("change", populateGroups);
+        groupSelect.addEventListener("change", populatePositions);
+
+        populateGroups();
+
+        groupMatchCell.appendChild(groupSelect);
+        positionCell.appendChild(positionSelect);
+        return;
+      }
+
+      const matchSelect = document.createElement("select");
+      matchSelect.className = "placement-match-select";
+
+      const populateMatches = () => {
+        matchSelect.innerHTML = '<option value="">-- Match --</option>';
+        const selectedPhaseId = Number(phaseSelect.value);
+        const matchBlocks = getMatchBlocksForPhase(selectedPhaseId, blocksByPhase);
+
+        for (const matchBlock of matchBlocks) {
+          const option = document.createElement("option");
+          option.value = String(matchBlock.id);
+          option.textContent = matchBlock.block_name || `Match ${matchBlock.id}`;
+          if (Number(entry.entry_source_id) === Number(matchBlock.id)) {
+            option.selected = true;
+          }
+          matchSelect.appendChild(option);
+        }
+      };
+
+      phaseSelect.addEventListener("change", populateMatches);
+      populateMatches();
+
+      groupMatchCell.appendChild(matchSelect);
+      setEmptyCell(positionCell);
     }
+
+    typeSelect.addEventListener("change", renderVariantControls);
+    renderVariantControls();
 
     row.appendChild(labelCell);
     row.appendChild(sourceCell);
+    row.appendChild(teamPhaseCell);
+    row.appendChild(groupMatchCell);
+    row.appendChild(positionCell);
     tbody.appendChild(row);
   }
   table.appendChild(tbody);

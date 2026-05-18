@@ -66,6 +66,9 @@ let persistedTeams = getDefaultTeams();
 let persistedPhases = getDefaultPhases();
 let persistedPlacements = [];
 let placementsUI = {};
+let placementsAutosaveTimer = null;
+let placementsSaveInFlight = false;
+let placementsSaveQueued = false;
 let phaseBlocksByPhase = new Map();
 
 /**
@@ -392,15 +395,84 @@ function showPlacementsStatus(message, isError = false) {
 }
 
 /**
+ * Persists the current placements table state to the backend.
+ * @returns {Promise<void>} Resolves when save is done.
+ */
+async function persistPlacementsNow() {
+  if (placementsSaveInFlight) {
+    placementsSaveQueued = true;
+    return;
+  }
+
+  placementsSaveInFlight = true;
+  try {
+    const draft = readPlacementsFromUI(placementsUI.container);
+    const teamCount = persistedTeams.length;
+    const saved = await savePlacements(teamCount, draft);
+    persistedPlacements = saved;
+    showPlacementsStatus("Platzierungen gespeichert");
+  } catch (error) {
+    showPlacementsStatus("Fehler beim Speichern von Platzierungen", true);
+  } finally {
+    placementsSaveInFlight = false;
+    if (placementsSaveQueued) {
+      placementsSaveQueued = false;
+      await persistPlacementsNow();
+    }
+  }
+}
+
+/**
+ * Schedules a debounced placements auto-save after user edits.
+ * @returns {void}
+ */
+function schedulePlacementsAutosave() {
+  if (placementsAutosaveTimer) {
+    clearTimeout(placementsAutosaveTimer);
+  }
+  showPlacementsStatus("Speichern...");
+  placementsAutosaveTimer = setTimeout(() => {
+    persistPlacementsNow();
+  }, 350);
+}
+
+/**
+ * Wires auto-save handlers for the current placements table body.
+ * @returns {void}
+ */
+function wirePlacementsAutosaveHandlers() {
+  if (!placementsUI.container) {
+    return;
+  }
+
+  placementsUI.container.addEventListener("change", schedulePlacementsAutosave);
+  placementsUI.container.addEventListener("input", (event) => {
+    if (event.target.matches(".placement-label-input")) {
+      schedulePlacementsAutosave();
+    }
+  });
+}
+
+/**
  * Initializes and displays the placements view.
  * @returns {Promise<void>} Resolves when initialization is complete.
  */
 async function initializePlacements() {
   try {
     const loaded = await loadPlacements();
-    persistedPlacements = loaded;
     const teamCount = persistedTeams.length;
-    
+    const placementsForCurrentTeamCount = loaded
+      .filter((placement) => Number(placement.team_count) === teamCount)
+      .sort((a, b) => Number(a.position_index) - Number(b.position_index));
+    const needsAutoGeneration = placementsForCurrentTeamCount.length !== teamCount;
+
+    if (needsAutoGeneration) {
+      const { suggestions } = await getPlacementSuggestions();
+      persistedPlacements = suggestions;
+    } else {
+      persistedPlacements = placementsForCurrentTeamCount;
+    }
+
     placementsUI = renderPlacementsUI(
       placementsMount,
       persistedPlacements,
@@ -410,50 +482,11 @@ async function initializePlacements() {
       phaseBlocksByPhase
     );
 
-    // Add event handler for suggest button
-    if (placementsUI.suggestBtn) {
-      placementsUI.suggestBtn.addEventListener("click", async () => {
-        try {
-          const { teamCount: suggestedTeamCount, suggestions } = await getPlacementSuggestions();
-          persistedPlacements = suggestions;
-          placementsUI = renderPlacementsUI(
-            placementsMount,
-            suggestions,
-            suggestedTeamCount,
-            persistedTeams,
-            persistedPhases,
-            phaseBlocksByPhase
-          );
-          rewirePlacementsEventHandlers();
-          showPlacementsStatus("Platzierungen generiert");
-        } catch (error) {
-          showPlacementsStatus("Fehler beim Generieren von Platzierungen", true);
-        }
-      });
-    }
+    wirePlacementsAutosaveHandlers();
 
-    // Add event handler for save button
-    if (placementsUI.saveBtn) {
-      placementsUI.saveBtn.addEventListener("click", async () => {
-        try {
-          const draft = readPlacementsFromUI(placementsUI.container);
-          const teamCount = persistedTeams.length;
-          const saved = await savePlacements(teamCount, draft);
-          persistedPlacements = saved;
-          placementsUI = renderPlacementsUI(
-            placementsMount,
-            saved,
-            teamCount,
-            persistedTeams,
-            persistedPhases,
-            phaseBlocksByPhase
-          );
-          rewirePlacementsEventHandlers();
-          showPlacementsStatus("Platzierungen gespeichert");
-        } catch (error) {
-          showPlacementsStatus("Fehler beim Speichern von Platzierungen", true);
-        }
-      });
+    if (needsAutoGeneration && teamCount > 0) {
+      showPlacementsStatus("Platzierungen automatisch generiert");
+      await persistPlacementsNow();
     }
 
     showPlacementsStatus("");
@@ -468,59 +501,6 @@ async function initializePlacements() {
       phaseBlocksByPhase
     );
     showPlacementsStatus("Platzierungen konnten nicht geladen werden", true);
-  }
-}
-
-/**
- * Re-wires event handlers after placements UI is re-rendered.
- */
-function rewirePlacementsEventHandlers() {
-  // Get fresh references to the buttons
-  const suggestBtn = placementsMount.querySelector(".btn-secondary");
-  const saveBtn = placementsMount.querySelector(".btn-primary");
-
-  if (suggestBtn) {
-    suggestBtn.addEventListener("click", async () => {
-      try {
-        const { teamCount: suggestedTeamCount, suggestions } = await getPlacementSuggestions();
-        persistedPlacements = suggestions;
-        placementsUI = renderPlacementsUI(
-          placementsMount,
-          suggestions,
-          suggestedTeamCount,
-          persistedTeams,
-          persistedPhases,
-          phaseBlocksByPhase
-        );
-        rewirePlacementsEventHandlers();
-        showPlacementsStatus("Platzierungen generiert");
-      } catch (error) {
-        showPlacementsStatus("Fehler beim Generieren von Platzierungen", true);
-      }
-    });
-  }
-
-  if (saveBtn) {
-    saveBtn.addEventListener("click", async () => {
-      try {
-        const draft = readPlacementsFromUI(placementsUI.container);
-        const teamCount = persistedTeams.length;
-        const saved = await savePlacements(teamCount, draft);
-        persistedPlacements = saved;
-        placementsUI = renderPlacementsUI(
-          placementsMount,
-          saved,
-          teamCount,
-          persistedTeams,
-          persistedPhases,
-          phaseBlocksByPhase
-        );
-        rewirePlacementsEventHandlers();
-        showPlacementsStatus("Platzierungen gespeichert");
-      } catch (error) {
-        showPlacementsStatus("Fehler beim Speichern von Platzierungen", true);
-      }
-    });
   }
 }
 
