@@ -170,7 +170,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS relations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       left_element TEXT NOT NULL,
       right_element TEXT NOT NULL,
       position INTEGER NOT NULL
@@ -179,7 +179,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS teams (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
       position INTEGER NOT NULL
     )
@@ -187,7 +187,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS phases (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
       position INTEGER NOT NULL
     )
@@ -219,7 +219,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS phase_blocks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       phase_id INTEGER NOT NULL,
       block_name TEXT NOT NULL DEFAULT '',
       block_type TEXT NOT NULL,
@@ -241,7 +241,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS placements (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       team_count INTEGER NOT NULL,
       position_number INTEGER NOT NULL,
       position_label TEXT NOT NULL,
@@ -253,7 +253,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS placement_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       placement_id INTEGER NOT NULL,
       slot_index INTEGER NOT NULL,
       entry_type TEXT NOT NULL,
@@ -303,7 +303,7 @@ async function initializeDatabase() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS matches (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       phase_id INTEGER NOT NULL,
       block_id INTEGER,
       block_name TEXT NOT NULL DEFAULT '',
@@ -1314,46 +1314,104 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
 
   try {
     await run("BEGIN TRANSACTION");
-    await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
+
+    const existingRows = await all("SELECT id FROM matches WHERE phase_id = ?", [phaseId]);
+    const existingIds = new Set(existingRows.map((row) => Number(row.id)));
+    const keptIds = [];
 
     for (let i = 0; i < rawMatches.length; i += 1) {
       const m = rawMatches[i] || {};
-      await run(
-        `INSERT INTO matches (
-          phase_id, block_id, block_name,
-          team1_id, team2_id, team1_ref, team2_ref,
-          referee_id, field_number, start_time,
-          is_finished, winner_id, loser_id, position
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          phaseId,
-          Number.isInteger(Number(m.block_id)) && Number(m.block_id) > 0
-            ? Number(m.block_id)
-            : null,
-          normalizeString(m.block_name),
-          Number.isInteger(Number(m.team1_id)) && Number(m.team1_id) > 0
-            ? Number(m.team1_id)
-            : null,
-          Number.isInteger(Number(m.team2_id)) && Number(m.team2_id) > 0
-            ? Number(m.team2_id)
-            : null,
-          normalizeString(m.team1_ref) || null,
-          normalizeString(m.team2_ref) || null,
-          Number.isInteger(Number(m.referee_id)) && Number(m.referee_id) > 0
-            ? Number(m.referee_id)
-            : null,
-          Math.max(1, normalizeInteger(m.field_number, 1)),
-          normalizeString(m.start_time),
-          m.is_finished ? 1 : 0,
-          Number.isInteger(Number(m.winner_id)) && Number(m.winner_id) > 0
-            ? Number(m.winner_id)
-            : null,
-          Number.isInteger(Number(m.loser_id)) && Number(m.loser_id) > 0
-            ? Number(m.loser_id)
-            : null,
-          i,
-        ]
-      );
+      const incomingId =
+        Number.isInteger(Number(m.id)) && Number(m.id) > 0 ? Number(m.id) : null;
+      const blockId =
+        Number.isInteger(Number(m.block_id)) && Number(m.block_id) > 0
+          ? Number(m.block_id)
+          : null;
+      const team1Id =
+        Number.isInteger(Number(m.team1_id)) && Number(m.team1_id) > 0
+          ? Number(m.team1_id)
+          : null;
+      const team2Id =
+        Number.isInteger(Number(m.team2_id)) && Number(m.team2_id) > 0
+          ? Number(m.team2_id)
+          : null;
+      const refereeId =
+        Number.isInteger(Number(m.referee_id)) && Number(m.referee_id) > 0
+          ? Number(m.referee_id)
+          : null;
+      const winnerId =
+        Number.isInteger(Number(m.winner_id)) && Number(m.winner_id) > 0
+          ? Number(m.winner_id)
+          : null;
+      const loserId =
+        Number.isInteger(Number(m.loser_id)) && Number(m.loser_id) > 0
+          ? Number(m.loser_id)
+          : null;
+
+      if (incomingId && existingIds.has(incomingId)) {
+        await run(
+          `UPDATE matches
+           SET block_id = ?, block_name = ?,
+               team1_id = ?, team2_id = ?, team1_ref = ?, team2_ref = ?,
+               referee_id = ?, field_number = ?, start_time = ?,
+               is_finished = ?, winner_id = ?, loser_id = ?, position = ?
+           WHERE id = ? AND phase_id = ?`,
+          [
+            blockId,
+            normalizeString(m.block_name),
+            team1Id,
+            team2Id,
+            normalizeString(m.team1_ref) || null,
+            normalizeString(m.team2_ref) || null,
+            refereeId,
+            Math.max(1, normalizeInteger(m.field_number, 1)),
+            normalizeString(m.start_time),
+            m.is_finished ? 1 : 0,
+            winnerId,
+            loserId,
+            i,
+            incomingId,
+            phaseId,
+          ]
+        );
+        keptIds.push(incomingId);
+      } else {
+        const inserted = await run(
+          `INSERT INTO matches (
+            phase_id, block_id, block_name,
+            team1_id, team2_id, team1_ref, team2_ref,
+            referee_id, field_number, start_time,
+            is_finished, winner_id, loser_id, position
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            phaseId,
+            blockId,
+            normalizeString(m.block_name),
+            team1Id,
+            team2Id,
+            normalizeString(m.team1_ref) || null,
+            normalizeString(m.team2_ref) || null,
+            refereeId,
+            Math.max(1, normalizeInteger(m.field_number, 1)),
+            normalizeString(m.start_time),
+            m.is_finished ? 1 : 0,
+            winnerId,
+            loserId,
+            i,
+          ]
+        );
+        keptIds.push(Number(inserted.lastID));
+      }
+    }
+
+    if (keptIds.length > 0) {
+      const placeholders = keptIds.map(() => "?").join(",");
+      await run(`DELETE FROM matches WHERE phase_id = ? AND id NOT IN (${placeholders})`, [
+        phaseId,
+        ...keptIds,
+      ]);
+    } else {
+      await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
     }
 
     await run("COMMIT");

@@ -1076,6 +1076,69 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
     }
   });
 
+  /**
+   * Reads the effective current match state with pending DnD updates applied.
+   * @param {object} match Base persisted match.
+   * @returns {object} Effective match object for collision/gap calculations.
+   */
+  function getEffectiveMatch(match) {
+    return updatedById.get(Number(match.id)) || match;
+  }
+
+  /**
+   * Pulls matches forward to close a free slot on one field.
+   * Keeps the dragged match at its drop destination and shifts only following matches.
+   * @param {number} field Field number where the gap should be closed.
+   * @param {string} gapTime Free HH:mm slot to fill.
+   * @returns {void}
+   */
+  function closeGapOnField(field, gapTime) {
+    let currentGap = String(gapTime || "");
+    let safety = 0;
+
+    while (currentGap && safety < 500) {
+      safety += 1;
+
+      const occupied = persistedMatches.some((match) => {
+        const effective = getEffectiveMatch(match);
+        return Number(effective.field_number) === field && String(effective.start_time) === currentGap;
+      });
+      if (occupied) {
+        return;
+      }
+
+      const nextCandidate = persistedMatches
+        .map((match) => getEffectiveMatch(match))
+        .filter(
+          (match) =>
+            Number(match.id) !== Number(matchId) &&
+            Number(match.field_number) === field &&
+            toMinutes(match.start_time) > toMinutes(currentGap)
+        )
+        .sort((a, b) => {
+          const timeCmp = toMinutes(a.start_time) - toMinutes(b.start_time);
+          if (timeCmp !== 0) {
+            return timeCmp;
+          }
+          return Number(a.id || 0) - Number(b.id || 0);
+        })[0];
+
+      if (!nextCandidate) {
+        return;
+      }
+
+      updatedById.set(Number(nextCandidate.id), {
+        ...nextCandidate,
+        field_number: field,
+        start_time: currentGap,
+      });
+
+      currentGap = String(nextCandidate.start_time);
+    }
+  }
+
+  closeGapOnField(Number(source.field_number), String(source.start_time));
+
   persistedMatches = persistedMatches.map((match) => {
     const updated = updatedById.get(Number(match.id));
     return updated ? { ...match, ...updated } : match;
