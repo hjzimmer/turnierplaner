@@ -43,6 +43,13 @@ import {
   readPlacementsFromUI,
   renderPlacementsUI,
 } from "./placements-layout.js";
+import {
+  mountTournamentPlanningLayout,
+  readSelectedPhaseIds,
+  renderTournamentPlanningFields,
+  renderTournamentPlanningGroups,
+  renderTournamentPlanningPhases,
+} from "./tournament-planning-layout.js";
 
 const appLayout = document.getElementById("appLayout");
 const navToggle = document.getElementById("navToggle");
@@ -55,12 +62,14 @@ const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
 const placementsMount = document.getElementById("placementsMount");
+const tournamentPlanningMount = document.getElementById("tournamentPlanningMount");
 
 const mobileQuery = window.matchMedia("(max-width: 880px)");
 
 const settingsUi = mountTournamentSettingsLayout(settingsMount);
 const teamsUi = mountTeamsLayout(teamsMount);
 const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
+const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
 let persistedSettings = getDefaultTournamentSettings();
 let persistedTeams = getDefaultTeams();
 let persistedPhases = getDefaultPhases();
@@ -504,6 +513,40 @@ async function initializePlacements() {
   }
 }
 
+/**
+ * Refreshes the group/match multi-select based on the current phase selection.
+ * @returns {void}
+ */
+function refreshTournamentPlanningGroups() {
+  const selectedPhaseIds = readSelectedPhaseIds(tournamentPlanningUi.phaseSelect);
+  renderTournamentPlanningGroups(
+    tournamentPlanningUi.groupSelect,
+    selectedPhaseIds,
+    phaseBlocksByPhase,
+    persistedPhases
+  );
+}
+
+/**
+ * Populates all three control selects of the tournament planning view
+ * using the current persisted phases, blocks, and setup fields count.
+ * @returns {void}
+ */
+function initializeTournamentPlanning() {
+  renderTournamentPlanningPhases(tournamentPlanningUi.phaseSelect, persistedPhases);
+  renderTournamentPlanningGroups(
+    tournamentPlanningUi.groupSelect,
+    [],
+    phaseBlocksByPhase,
+    persistedPhases
+  );
+  renderTournamentPlanningFields(tournamentPlanningUi.fieldSelect, persistedSettings.fields);
+}
+
+tournamentPlanningUi.phaseSelect.addEventListener("change", () => {
+  refreshTournamentPlanningGroups();
+});
+
 navToggle.addEventListener("click", toggleNavigation);
 sidebarBackdrop.addEventListener("click", () => {
   appLayout.classList.remove("is-open-mobile");
@@ -844,7 +887,8 @@ openView("turniersetup");
 initializeTournamentSettings();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.
 // Placements must finish after both teams and phases.
-initializeTeams().then(() => initializePhases()).then(() => initializePlacements());
+// Tournament planning runs last as it depends on all persisted state.
+initializeTeams().then(() => initializePhases()).then(() => initializePlacements()).then(() => initializeTournamentPlanning());
 
 menuGroups.forEach((group) => {
   const button = group.querySelector(".menu-btn.level-1");

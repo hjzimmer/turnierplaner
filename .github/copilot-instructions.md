@@ -1,5 +1,7 @@
 # Copilot Instructions for relation-cards-app
 
+- alle modifikationen sollen ausschließlich im projekt ordner relation-cards-app gemacht werden. alle anderen verzeichnisse werden ignoriert
+
 ## Project Context
 - Stack: Node.js, Express, SQLite, vanilla HTML/CSS/JavaScript modules.
 - Frontend files are in `public/`.

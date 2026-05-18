@@ -78,6 +78,25 @@
                 </li>
               </ul>
             </li>
+
+            <li class="menu-group">
+              <button
+                class="menu-btn level-1"
+                type="button"
+                aria-expanded="false"
+                aria-controls="tournamentPlanningSubmenu"
+                data-group="tournamentPlanning"
+              >
+                Turnierplanung
+              </button>
+              <ul class="menu-level level-2" id="tournamentPlanningSubmenu">
+                <li>
+                  <button class="menu-btn level-2" type="button" data-view="turnierplanung">
+                    Spielplan
+                  </button>
+                </li>
+              </ul>
+            </li>
           </ul>
         </nav>
       </aside>
@@ -124,6 +143,18 @@
           </header>
 
           <div id="placementsMount"></div>
+        </section>
+
+        <section class="content-section phases-full" data-screen="turnierplanung" hidden>
+          <header class="section-head">
+            <h2>Turnierplanung / Spielplan</h2>
+            <p>
+              Waehle Phasen, Gruppen/Matches und Felder aus, um den Spielplan zu konfigurieren.
+              Die Spiele werden in der Mitte als Raster angezeigt.
+            </p>
+          </header>
+
+          <div id="tournamentPlanningMount"></div>
         </section>
       </main>
 
