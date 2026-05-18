@@ -410,6 +410,7 @@ body {
   border: 1px solid #c9d8e8;
   border-radius: 12px;
   background: #fbfdff;
+  position: relative;
   padding: 0.65rem;
   display: flex;
   flex-direction: column;
@@ -425,20 +426,80 @@ body {
   align-items: center;
 }
 
-.phase-name-input {
+.phase-name-title {
   flex: 1;
-  border: 1px solid #c9d3e1;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0 0.15rem;
+}
+
+.phase-name-popup {
+  display: none;
+}
+
+.phase-name-popup.is-open {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(14, 22, 34, 0.28);
   border-radius: 10px;
-  min-height: 38px;
-  padding: 0.5rem 0.6rem;
+  padding: 0.5rem;
+  z-index: 3;
+}
+
+.phase-name-popup-inner {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid #ccd9e7;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0.45rem;
+}
+
+.phase-name-popup-title {
+  font-size: 0.8rem;
+}
+
+.phase-name-popup-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 34px;
+  padding: 0.35rem 0.5rem;
   font: inherit;
   color: var(--ink);
   background: #ffffff;
 }
 
-.phase-name-input:focus {
+.phase-name-popup-input:focus {
   outline: 2px solid #a5d7d8;
   outline-offset: 1px;
+}
+
+.phase-name-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.phase-name-popup-btn {
+  border: 1px solid #b8c8dc;
+  border-radius: 8px;
+  min-height: 30px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-size: 0.78rem;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.phase-name-popup-btn.is-primary {
+  border-color: #82afc0;
+  background: #dff0f0;
 }
 
 .phase-icon-actions {
@@ -621,6 +682,24 @@ body {
   gap: 0.25rem;
 }
 
+.phase-block-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.phase-block-slot-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  min-width: 2.8rem;
+  flex-shrink: 0;
+}
+
+.phase-block-slot .phase-block-slot-select {
+  flex: 1;
+  width: auto;
+}
+
 .add-phase-btn {
   border: 1px solid #b8c8dc;
   border-radius: 10px;
@@ -725,4 +804,216 @@ body {
   .team-row {
     grid-template-columns: 1fr;
   }
+}
+
+/* ===== Placements Styles ===== */
+.placements-summary {
+  padding: 1rem;
+  background-color: var(--surface-soft);
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+  border-left: 4px solid var(--accent);
+}
+
+.placements-summary p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.placements-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.placement-card {
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  box-shadow: 0 2px 4px rgba(24, 35, 51, 0.08);
+}
+
+.placement-card-header {
+  margin-bottom: 1rem;
+}
+
+.placement-label-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.placement-label-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.placement-slots-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.placement-slot {
+  padding: 0.75rem;
+  background-color: var(--surface-soft);
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
+.placement-slot-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.placement-entry-type-select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.placement-entry-type-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.placement-slot-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.placement-slot-options label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 0.5rem;
+}
+
+.placement-team-select,
+.placement-phase-select,
+.placement-group-index {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.placement-team-select:focus,
+.placement-phase-select:focus,
+.placement-group-index:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+
+.placements-controls {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-start;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.placements-controls .btn {
+  padding: 0.7rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.placements-controls .btn-primary {
+  background-color: var(--accent);
+  color: white;
+}
+
+.placements-controls .btn-primary:hover {
+  background-color: #0a6f6c;
+  box-shadow: var(--shadow-soft);
+}
+
+.placements-controls .btn-secondary {
+  background-color: var(--surface-soft);
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.placements-controls .btn-secondary:hover {
+  background-color: var(--bg-1);
+}
+
+.placements-overview {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background-color: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.placements-overview h3 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: var(--ink);
+}
+
+.placements-overview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.placements-overview-table thead {
+  background-color: var(--surface-soft);
+  border-bottom: 2px solid var(--line);
+}
+
+.placements-overview-table th {
+  padding: 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.placements-overview-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.placements-overview-row:hover {
+  background-color: var(--bg-1);
+}
+
+.placement-label-cell {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.placement-source-cell {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.empty-message {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 2rem;
+  color: var(--muted);
+  font-style: italic;
 }

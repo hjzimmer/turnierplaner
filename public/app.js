@@ -32,11 +32,17 @@ import {
 } from "./layout.js";
 import { loadPhaseBlocks, savePhaseBlocks } from "./phase-blocks-store.js";
 import {
+  createDefaultEinzelspielBlock,
   createDefaultPhaseBlock,
   readPhaseBlocksFromContainer,
   renderPhaseBlocks,
   syncSlotSelectOptionsInBlock,
 } from "./phase-blocks-layout.js";
+import { loadPlacements, getPlacementSuggestions, savePlacements } from "./placements-store.js";
+import {
+  readPlacementsFromUI,
+  renderPlacementsUI,
+} from "./placements-layout.js";
 
 const appLayout = document.getElementById("appLayout");
 const navToggle = document.getElementById("navToggle");
@@ -48,6 +54,7 @@ const sections = [...document.querySelectorAll(".content-section")];
 const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
+const placementsMount = document.getElementById("placementsMount");
 
 const mobileQuery = window.matchMedia("(max-width: 880px)");
 
@@ -57,6 +64,8 @@ const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
 let persistedSettings = getDefaultTournamentSettings();
 let persistedTeams = getDefaultTeams();
 let persistedPhases = getDefaultPhases();
+let persistedPlacements = [];
+let placementsUI = {};
 let phaseBlocksByPhase = new Map();
 
 /**
@@ -320,7 +329,7 @@ function renderAllPhaseBlocks() {
     }
 
     const blocks = phaseBlocksByPhase.get(phase.id) || [];
-    renderPhaseBlocks(blockContainer, phase.id, blocks, phases, persistedTeams, phaseBlocksByPhase);
+    renderPhaseBlocks(blockContainer, phase.id, blocks, phases, persistedTeams, phaseBlocksByPhase, persistedPlacements);
   });
 }
 
@@ -364,6 +373,154 @@ async function initializePhases() {
     refreshBlockPhaseSelectOptions();
     phaseBlocksByPhase = new Map();
     showPhasesStatus("Laden fehlgeschlagen", true);
+  }
+}
+
+/**
+ * Displays a status message for placements operations.
+ * @param {string} message Status message.
+ * @param {boolean} isError Whether this is an error message.
+ */
+function showPlacementsStatus(message, isError = false) {
+  if (!placementsUI.statusDisplay) {
+    placementsUI.statusDisplay = document.createElement("div");
+    placementsUI.statusDisplay.className = "status-display";
+    placementsMount.appendChild(placementsUI.statusDisplay);
+  }
+  placementsUI.statusDisplay.textContent = message;
+  placementsUI.statusDisplay.className = `status-display ${isError ? "is-error" : ""}`;
+}
+
+/**
+ * Initializes and displays the placements view.
+ * @returns {Promise<void>} Resolves when initialization is complete.
+ */
+async function initializePlacements() {
+  try {
+    const loaded = await loadPlacements();
+    persistedPlacements = loaded;
+    const teamCount = persistedTeams.length;
+    
+    placementsUI = renderPlacementsUI(
+      placementsMount,
+      persistedPlacements,
+      teamCount,
+      persistedTeams,
+      persistedPhases,
+      phaseBlocksByPhase
+    );
+
+    // Add event handler for suggest button
+    if (placementsUI.suggestBtn) {
+      placementsUI.suggestBtn.addEventListener("click", async () => {
+        try {
+          const { teamCount: suggestedTeamCount, suggestions } = await getPlacementSuggestions();
+          persistedPlacements = suggestions;
+          placementsUI = renderPlacementsUI(
+            placementsMount,
+            suggestions,
+            suggestedTeamCount,
+            persistedTeams,
+            persistedPhases,
+            phaseBlocksByPhase
+          );
+          rewirePlacementsEventHandlers();
+          showPlacementsStatus("Platzierungen generiert");
+        } catch (error) {
+          showPlacementsStatus("Fehler beim Generieren von Platzierungen", true);
+        }
+      });
+    }
+
+    // Add event handler for save button
+    if (placementsUI.saveBtn) {
+      placementsUI.saveBtn.addEventListener("click", async () => {
+        try {
+          const draft = readPlacementsFromUI(placementsUI.container);
+          const teamCount = persistedTeams.length;
+          const saved = await savePlacements(teamCount, draft);
+          persistedPlacements = saved;
+          placementsUI = renderPlacementsUI(
+            placementsMount,
+            saved,
+            teamCount,
+            persistedTeams,
+            persistedPhases,
+            phaseBlocksByPhase
+          );
+          rewirePlacementsEventHandlers();
+          showPlacementsStatus("Platzierungen gespeichert");
+        } catch (error) {
+          showPlacementsStatus("Fehler beim Speichern von Platzierungen", true);
+        }
+      });
+    }
+
+    showPlacementsStatus("");
+  } catch (error) {
+    persistedPlacements = [];
+    renderPlacementsUI(
+      placementsMount,
+      [],
+      persistedTeams.length,
+      persistedTeams,
+      persistedPhases,
+      phaseBlocksByPhase
+    );
+    showPlacementsStatus("Platzierungen konnten nicht geladen werden", true);
+  }
+}
+
+/**
+ * Re-wires event handlers after placements UI is re-rendered.
+ */
+function rewirePlacementsEventHandlers() {
+  // Get fresh references to the buttons
+  const suggestBtn = placementsMount.querySelector(".btn-secondary");
+  const saveBtn = placementsMount.querySelector(".btn-primary");
+
+  if (suggestBtn) {
+    suggestBtn.addEventListener("click", async () => {
+      try {
+        const { teamCount: suggestedTeamCount, suggestions } = await getPlacementSuggestions();
+        persistedPlacements = suggestions;
+        placementsUI = renderPlacementsUI(
+          placementsMount,
+          suggestions,
+          suggestedTeamCount,
+          persistedTeams,
+          persistedPhases,
+          phaseBlocksByPhase
+        );
+        rewirePlacementsEventHandlers();
+        showPlacementsStatus("Platzierungen generiert");
+      } catch (error) {
+        showPlacementsStatus("Fehler beim Generieren von Platzierungen", true);
+      }
+    });
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      try {
+        const draft = readPlacementsFromUI(placementsUI.container);
+        const teamCount = persistedTeams.length;
+        const saved = await savePlacements(teamCount, draft);
+        persistedPlacements = saved;
+        placementsUI = renderPlacementsUI(
+          placementsMount,
+          saved,
+          teamCount,
+          persistedTeams,
+          persistedPhases,
+          phaseBlocksByPhase
+        );
+        rewirePlacementsEventHandlers();
+        showPlacementsStatus("Platzierungen gespeichert");
+      } catch (error) {
+        showPlacementsStatus("Fehler beim Speichern von Platzierungen", true);
+      }
+    });
   }
 }
 
@@ -453,34 +610,22 @@ teamsUi.form.addEventListener("submit", async (event) => {
 
 phasesUi.addButton.addEventListener("click", async () => {
   const newColumn = addPhaseColumn(phasesUi.columnsContainer);
-  const input = newColumn.querySelector(".phase-name-input");
+  const popup = newColumn.querySelector(".phase-name-popup");
+  const input = newColumn.querySelector(".phase-name-popup-input");
   refreshBlockPhaseSelectOptions();
   renderAllPhaseBlocks();
 
+  if (popup) {
+    popup.classList.add("is-open");
+  }
   if (input) {
     input.focus();
-    // Auto-save on blur of the name input
-    input.addEventListener("blur", async function onBlur() {
-      input.removeEventListener("blur", onBlur);
-      const name = input.value.trim();
-      if (!name) {
-        newColumn.remove();
-        refreshBlockPhaseSelectOptions();
-        renderAllPhaseBlocks();
-        return;
-      }
-      try {
-        await savePhasesNow();
-        showPhasesStatus("Phase gespeichert");
-      } catch {
-        showPhasesStatus("Speichern fehlgeschlagen", true);
-      }
-    }, { once: true });
+    input.select();
   }
 });
 
 phasesUi.columnsContainer.addEventListener("click", async (event) => {
-  const actionButton = event.target.closest(".phase-icon-btn");
+  const actionButton = event.target.closest(".phase-icon-btn, .phase-name-popup-btn");
   if (!actionButton) {
     return;
   }
@@ -490,10 +635,15 @@ phasesUi.columnsContainer.addEventListener("click", async (event) => {
     return;
   }
 
-  const input = column.querySelector(".phase-name-input");
+  const popup = column.querySelector(".phase-name-popup");
+  const input = column.querySelector(".phase-name-popup-input");
+  const title = column.querySelector(".phase-name-title");
   const action = actionButton.dataset.action;
 
   if (action === "rename") {
+    if (popup) {
+      popup.classList.add("is-open");
+    }
     if (input) {
       input.focus();
       input.select();
@@ -501,8 +651,51 @@ phasesUi.columnsContainer.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "cancel-rename") {
+    if (popup) {
+      popup.classList.remove("is-open");
+    }
+    const phaseId = Number(column.dataset.phaseId);
+    const currentName = (input?.value || "").trim();
+    if (!phaseId && !currentName) {
+      column.remove();
+      refreshBlockPhaseSelectOptions();
+      renderAllPhaseBlocks();
+    }
+    return;
+  }
+
+  if (action === "save-rename") {
+    const name = (input?.value || "").trim();
+    if (!name) {
+      if (input) {
+        input.focus();
+      }
+      showPhasesStatus("Bitte einen Phasennamen eingeben", true);
+      return;
+    }
+
+    if (title) {
+      title.textContent = name;
+    }
+    if (input) {
+      input.value = name;
+    }
+    if (popup) {
+      popup.classList.remove("is-open");
+    }
+
+    try {
+      await savePhasesNow();
+      showPhasesStatus("Phase gespeichert");
+    } catch {
+      showPhasesStatus("Speichern fehlgeschlagen", true);
+    }
+    return;
+  }
+
   if (action === "delete") {
-    const phaseName = input?.value?.trim() || "diese Phase";
+    const phaseName = title?.textContent?.trim() || input?.value?.trim() || "diese Phase";
     const confirmed = window.confirm(`"${phaseName}" wirklich loeschen?`);
     if (!confirmed) {
       return;
@@ -526,26 +719,6 @@ phasesUi.columnsContainer.addEventListener("click", async (event) => {
     }
   }
 });
-
-phasesUi.columnsContainer.addEventListener("input", (event) => {
-  if (event.target.closest(".phase-name-input")) {
-    refreshBlockPhaseSelectOptions();
-    renderAllPhaseBlocks();
-  }
-});
-
-// Auto-save phase name on blur
-phasesUi.columnsContainer.addEventListener("blur", async (event) => {
-  const nameInput = event.target.closest(".phase-name-input");
-  if (!nameInput) {
-    return;
-  }
-  try {
-    await savePhasesNow();
-  } catch {
-    showPhasesStatus("Speichern fehlgeschlagen", true);
-  }
-}, true);
 
 /**
  * Handles save/reload cycle when a block element changed in one phase column.
@@ -657,15 +830,12 @@ phasesUi.addBlockButton.addEventListener("click", async () => {
   }
 
   const blockType = phasesUi.blockTypeSelect.value;
-  if (blockType !== "gruppe") {
-    setSaveStatus(phasesUi.saveStatus, "Nur Baustein-Typ Gruppe ist aktuell verfuegbar", true);
-    return;
-  }
+  const defaultBlock =
+    blockType === "einzelspiel" ? createDefaultEinzelspielBlock() : createDefaultPhaseBlock();
 
   const currentBlocks = phaseBlocksByPhase.get(phaseId) || [];
-  const draftBlocks = [...currentBlocks, createDefaultPhaseBlock()].map((block, index) => ({
+  const draftBlocks = [...currentBlocks, defaultBlock].map((block, index) => ({
     ...block,
-    block_type: "gruppe",
     position: index,
   }));
 
@@ -693,7 +863,8 @@ mobileQuery.addEventListener("change", () => {
 openView("turniersetup");
 initializeTournamentSettings();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.
-initializeTeams().then(() => initializePhases());
+// Placements must finish after both teams and phases.
+initializeTeams().then(() => initializePhases()).then(() => initializePlacements());
 
 menuGroups.forEach((group) => {
   const button = group.querySelector(".menu-btn.level-1");

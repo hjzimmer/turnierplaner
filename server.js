@@ -239,6 +239,60 @@ async function initializeDatabase() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS placements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      team_count INTEGER NOT NULL,
+      position_number INTEGER NOT NULL,
+      position_label TEXT NOT NULL,
+      position_index INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS placement_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      placement_id INTEGER NOT NULL,
+      slot_index INTEGER NOT NULL,
+      entry_type TEXT NOT NULL,
+      entry_source_id INTEGER,
+      entry_source_phase_id INTEGER,
+      entry_group_name TEXT,
+      entry_group_position INTEGER,
+      entry_match_result TEXT,
+      entry_match_name TEXT,
+      entry_team_name TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (placement_id) REFERENCES placements(id)
+    )
+  `);
+
+  try {
+    await run("ALTER TABLE placement_entries ADD COLUMN entry_group_name TEXT");
+  } catch (error) {
+    // Column already present - no action needed.
+  }
+
+  try {
+    await run("ALTER TABLE placement_entries ADD COLUMN entry_group_position INTEGER");
+  } catch (error) {
+    // Column already present - no action needed.
+  }
+
+  try {
+    await run("ALTER TABLE placement_entries ADD COLUMN entry_match_result TEXT");
+  } catch (error) {
+    // Column already present - no action needed.
+  }
+
+  try {
+    await run("ALTER TABLE placement_entries ADD COLUMN entry_match_name TEXT");
+  } catch (error) {
+    // Column already present - no action needed.
+  }
+
   try {
     await run("ALTER TABLE phase_blocks ADD COLUMN block_name TEXT NOT NULL DEFAULT ''");
   } catch (error) {
@@ -560,7 +614,8 @@ function normalizePhases(input) {
  * @returns {"gruppe"} Normalized block type.
  */
 function normalizePhaseBlockType(value) {
-  return normalizeString(value) === "gruppe" ? "gruppe" : "gruppe";
+  const normalized = normalizeString(value);
+  return normalized === "einzelspiel" ? "einzelspiel" : "gruppe";
 }
 
 /**
@@ -569,7 +624,10 @@ function normalizePhaseBlockType(value) {
  * @returns {"teams"|"phase"} Normalized source type.
  */
 function normalizePhaseBlockSourceType(value) {
-  return normalizeString(value) === "phase" ? "phase" : "teams";
+  const normalized = normalizeString(value);
+  if (normalized === "phase") return "phase";
+  if (normalized === "match") return "match";
+  return "teams";
 }
 
 /**
@@ -591,6 +649,69 @@ function normalizePhaseBlockName(value, position) {
 function normalizePhaseBlockSlotValue(value) {
   const normalized = normalizeString(value);
   return normalized.length > 0 ? normalized : null;
+}
+
+/**
+ * Generates suggested placement labels based on team count.
+ * @param {number} teamCount Number of teams.
+ * @returns {Array<string>} Suggested placement labels (e.g., "1st Place", "2nd Place", ...).
+ */
+function generatePlacementLabels(teamCount) {
+  const labels = [];
+  for (let i = 1; i <= teamCount; i++) {
+    const suffix = i === 1 ? "st" : i === 2 ? "nd" : i === 3 ? "rd" : "th";
+    labels.push(`${i}${suffix} Place`);
+  }
+  return labels;
+}
+
+/**
+ * Normalizes placement input data.
+ * @param {*} value Raw placement input.
+ * @param {number} index Placement index.
+ * @returns {object} Normalized placement object.
+ */
+function normalizePlacement(value, index) {
+  const placement = value || {};
+  const positionLabel = normalizeString(placement.position_label) || `Place ${index + 1}`;
+  return {
+    position_number: index + 1,
+    position_label: positionLabel,
+    position_index: index,
+  };
+}
+
+/**
+ * Loads all placements with their entries from the database.
+ * @returns {Promise<Array<object>>} Array of placements with entries.
+ */
+async function loadPlacementsWithEntries() {
+  const rows = await all(`
+    SELECT id, team_count, position_number, position_label, position_index, created_at, updated_at
+    FROM placements
+    ORDER BY team_count DESC, position_index ASC
+  `);
+
+  const placements = [];
+  for (const row of rows) {
+    const entries = await all(
+      "SELECT id, slot_index, entry_type, entry_source_id, entry_source_phase_id, entry_group_name, entry_group_position, entry_match_result, entry_match_name, entry_team_name FROM placement_entries WHERE placement_id = ? ORDER BY slot_index ASC",
+      [row.id]
+    );
+
+    placements.push({
+      id: row.id,
+      team_count: row.team_count,
+      position_number: row.position_number,
+      position_label: row.position_label,
+      position_index: row.position_index,
+      entries: entries || [],
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    });
+  }
+
+  return placements;
 }
 
 app.use(express.json());
@@ -837,10 +958,10 @@ app.put("/api/phases/:id/blocks", async (req, res) => {
       const blockType = normalizePhaseBlockType(rawBlock.block_type);
       const sourceType = normalizePhaseBlockSourceType(rawBlock.source_type);
       const sourcePhaseId =
-        sourceType === "phase" && Number.isInteger(Number(rawBlock.source_phase_id))
+        (["phase", "match"].includes(sourceType) && Number.isInteger(Number(rawBlock.source_phase_id)))
           ? Number(rawBlock.source_phase_id)
           : null;
-      const teamsPerGroup = Math.max(2, normalizeInteger(rawBlock.teams_per_group, 4));
+      const teamsPerGroup = blockType === "einzelspiel" ? 2 : Math.max(2, normalizeInteger(rawBlock.teams_per_group, 4));
       const rawSlots = Array.isArray(rawBlock.slots) ? rawBlock.slots : [];
 
       let persistedBlockId = blockId;
@@ -1014,6 +1135,118 @@ app.post("/api/reorder", async (req, res) => {
       // no-op
     }
     res.status(500).json({ error: "Failed to persist reorder." });
+  }
+});
+
+// Liefert alle definierten Platzierungen mit ihren Einträgen.
+app.get("/api/placements", async (req, res) => {
+  try {
+    const placements = await loadPlacementsWithEntries();
+    res.json({ placements });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load placements." });
+  }
+});
+
+// Liefert Vorschläge für Platzierungen basierend auf der Anzahl der Teams.
+app.get("/api/placements/suggestions", async (req, res) => {
+  try {
+    const teams = await all("SELECT id FROM teams");
+    const teamCount = teams.length;
+    const labels = generatePlacementLabels(teamCount);
+    const suggestions = labels.map((label, index) => ({
+      position_number: index + 1,
+      position_label: label,
+      position_index: index,
+    }));
+    res.json({ teamCount, suggestions });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate placement suggestions." });
+  }
+});
+
+// Speichert die Platzierungen und ihre Einträge atomar.
+app.put("/api/placements", async (req, res) => {
+  try {
+    const rawPlacements = Array.isArray(req.body?.placements) ? req.body.placements : [];
+    const teamCountInput = Number.isInteger(Number(req.body?.team_count)) ? Number(req.body.team_count) : 0;
+
+    await run("BEGIN TRANSACTION");
+
+    // Delete old placements for this team count
+    await run("DELETE FROM placement_entries WHERE placement_id IN (SELECT id FROM placements WHERE team_count = ?)", [teamCountInput]);
+    await run("DELETE FROM placements WHERE team_count = ?", [teamCountInput]);
+
+    const persistedPlacementIds = [];
+
+    for (let index = 0; index < rawPlacements.length; index += 1) {
+      const rawPlacement = rawPlacements[index] || {};
+      const normalized = normalizePlacement(rawPlacement, index);
+
+      const result = await run(
+        `INSERT INTO placements (team_count, position_number, position_label, position_index, created_at, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`,
+        [teamCountInput, normalized.position_number, normalized.position_label, normalized.position_index]
+      );
+
+      const placementId = result.lastID;
+      persistedPlacementIds.push(placementId);
+
+      const rawEntries = Array.isArray(rawPlacement.entries) ? rawPlacement.entries : [];
+      for (let slotIndex = 0; slotIndex < rawEntries.length; slotIndex += 1) {
+        const rawEntry = rawEntries[slotIndex] || {};
+        const entryType = normalizeString(rawEntry.entry_type) || "team";
+        const entrySourceId = Number.isInteger(Number(rawEntry.entry_source_id)) ? Number(rawEntry.entry_source_id) : null;
+        const entrySourcePhaseId = Number.isInteger(Number(rawEntry.entry_source_phase_id)) ? Number(rawEntry.entry_source_phase_id) : null;
+        const entryGroupName = normalizeString(rawEntry.entry_group_name) || null;
+        const entryGroupPosition = Number.isInteger(Number(rawEntry.entry_group_position))
+          ? Number(rawEntry.entry_group_position)
+          : null;
+        const entryMatchResult = normalizeString(rawEntry.entry_match_result) || null;
+        const entryMatchName = normalizeString(rawEntry.entry_match_name) || null;
+        const entryTeamName = normalizeString(rawEntry.entry_team_name) || null;
+
+        await run(
+          `INSERT INTO placement_entries (
+            placement_id,
+            slot_index,
+            entry_type,
+            entry_source_id,
+            entry_source_phase_id,
+            entry_group_name,
+            entry_group_position,
+            entry_match_result,
+            entry_match_name,
+            entry_team_name,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+          [
+            placementId,
+            slotIndex,
+            entryType,
+            entrySourceId,
+            entrySourcePhaseId,
+            entryGroupName,
+            entryGroupPosition,
+            entryMatchResult,
+            entryMatchName,
+            entryTeamName,
+          ]
+        );
+      }
+    }
+
+    await run("COMMIT");
+
+    const placements = await loadPlacementsWithEntries();
+    res.json({ placements });
+  } catch (error) {
+    try {
+      await run("ROLLBACK");
+    } catch (rollbackError) {
+      // no-op
+    }
+    res.status(500).json({ error: "Failed to save placements." });
   }
 });
 

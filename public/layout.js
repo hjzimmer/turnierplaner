@@ -307,6 +307,7 @@ export function mountPhaseConfigLayout(targetElement) {
       </select>
       <select id="blockTypeSelect" class="phase-block-toolbar-select" aria-label="Baustein-Typ">
         <option value="gruppe">Gruppe</option>
+        <option value="einzelspiel">Einzelspiel</option>
       </select>
       <button id="addBlockBtn" class="add-phase-btn" type="button">+ Baustein hinzufuegen</button>
       <span id="phasesSaveStatus" class="save-status" aria-live="polite"></span>
@@ -327,7 +328,7 @@ export function mountPhaseConfigLayout(targetElement) {
 }
 
 /**
- * Creates one phase column element with name input, rename/delete icon controls, and baustein container.
+ * Creates one phase column element with name title, edit/delete icon controls, popup editor, and baustein container.
  * @param {{id?: number|null, name?: string}} [phase={}] Phase data.
  * @returns {HTMLDivElement} Phase column element.
  */
@@ -338,17 +339,13 @@ function createPhaseColumnElement({ id = null, name = "" } = {}) {
     column.dataset.phaseId = String(id);
   }
 
-  // --- Header: name input + action icons ---
+  // --- Header: name title + action icons ---
   const header = document.createElement("div");
   header.className = "phase-column-head";
 
-  const input = document.createElement("input");
-  input.className = "phase-name-input";
-  input.type = "text";
-  input.name = "phase_name";
-  input.autocomplete = "off";
-  input.value = name;
-  input.placeholder = "Phase benennen";
+  const title = document.createElement("strong");
+  title.className = "phase-name-title";
+  title.textContent = (name || "").trim() || "Neue Phase";
 
   const actions = document.createElement("div");
   actions.className = "phase-icon-actions";
@@ -357,8 +354,8 @@ function createPhaseColumnElement({ id = null, name = "" } = {}) {
   renameButton.className = "phase-icon-btn";
   renameButton.type = "button";
   renameButton.dataset.action = "rename";
-  renameButton.title = "Phase benennen";
-  renameButton.setAttribute("aria-label", "Phase benennen");
+  renameButton.title = "Phase bearbeiten";
+  renameButton.setAttribute("aria-label", "Phase bearbeiten");
   renameButton.textContent = "✎";
 
   const deleteButton = document.createElement("button");
@@ -369,9 +366,49 @@ function createPhaseColumnElement({ id = null, name = "" } = {}) {
   deleteButton.setAttribute("aria-label", "Phase loeschen");
   deleteButton.textContent = "🗑";
 
+  const popup = document.createElement("div");
+  popup.className = "phase-name-popup";
+
+  const popupInner = document.createElement("div");
+  popupInner.className = "phase-name-popup-inner";
+
+  const popupLabel = document.createElement("strong");
+  popupLabel.className = "phase-name-popup-title";
+  popupLabel.textContent = "Phase bearbeiten";
+
+  const popupInput = document.createElement("input");
+  popupInput.className = "phase-name-popup-input";
+  popupInput.type = "text";
+  popupInput.name = "phase_name";
+  popupInput.autocomplete = "off";
+  popupInput.value = name;
+  popupInput.placeholder = "Phasenname";
+
+  const popupActions = document.createElement("div");
+  popupActions.className = "phase-name-popup-actions";
+
+  const cancelEditButton = document.createElement("button");
+  cancelEditButton.className = "phase-name-popup-btn";
+  cancelEditButton.type = "button";
+  cancelEditButton.dataset.action = "cancel-rename";
+  cancelEditButton.textContent = "Abbrechen";
+
+  const saveEditButton = document.createElement("button");
+  saveEditButton.className = "phase-name-popup-btn is-primary";
+  saveEditButton.type = "button";
+  saveEditButton.dataset.action = "save-rename";
+  saveEditButton.textContent = "Speichern";
+
+  popupActions.appendChild(cancelEditButton);
+  popupActions.appendChild(saveEditButton);
+  popupInner.appendChild(popupLabel);
+  popupInner.appendChild(popupInput);
+  popupInner.appendChild(popupActions);
+  popup.appendChild(popupInner);
+
   actions.appendChild(renameButton);
   actions.appendChild(deleteButton);
-  header.appendChild(input);
+  header.appendChild(title);
   header.appendChild(actions);
 
   // --- Baustein body: phase blocks mount here ---
@@ -379,6 +416,7 @@ function createPhaseColumnElement({ id = null, name = "" } = {}) {
   blockBody.className = "phase-blocks";
 
   column.appendChild(header);
+  column.appendChild(popup);
   column.appendChild(blockBody);
   return column;
 }
@@ -418,6 +456,6 @@ export function readPhasesFromColumns(columnsContainer) {
   const columns = [...columnsContainer.querySelectorAll(".phase-column")];
   return columns.map((column) => ({
     id: column.dataset.phaseId ? Number(column.dataset.phaseId) : null,
-    name: column.querySelector(".phase-name-input")?.value || "",
+    name: column.querySelector(".phase-name-popup-input")?.value || "",
   }));
 }

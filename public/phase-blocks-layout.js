@@ -5,7 +5,7 @@
  * @returns {void}
  */
 function applySourcePhaseSelectVisibility(sourceTypeSelect, sourcePhaseSelect) {
-  const isPhase = sourceTypeSelect.value === "phase";
+  const isPhase = sourceTypeSelect.value === "phase" || sourceTypeSelect.value === "match";
 
   // Keep an explicit empty option so the select can always render a stable hint state.
   if (!sourcePhaseSelect.querySelector('option[value=""]')) {
@@ -70,6 +70,12 @@ function getSourceKey(block) {
       ? `phase:${sourcePhaseId}`
       : "phase:none";
   }
+  if (block.source_type === "match") {
+    const sourcePhaseId = Number(block.source_phase_id);
+    return Number.isInteger(sourcePhaseId) && sourcePhaseId > 0
+      ? `match:${sourcePhaseId}`
+      : "match:none";
+  }
   return "teams";
 }
 
@@ -97,6 +103,22 @@ function buildSourceOptions(block, teams, blocksByPhase) {
       }
     });
 
+    return options;
+  }
+
+  if (block.source_type === "match" && Number.isInteger(Number(block.source_phase_id))) {
+    const sourcePhaseId = Number(block.source_phase_id);
+    const sourceBlocks = (blocksByPhase.get(sourcePhaseId) || []).filter(
+      (sb) => sb.block_type === "einzelspiel"
+    );
+    const options = [];
+    sourceBlocks.forEach((sourceBlock, gameIndex) => {
+      const sourceName = normalizeBlockName(sourceBlock.block_name, gameIndex);
+      options.push(
+        { value: `match-winner:${sourceBlock.id}`, label: `${sourceName} Gewinner` },
+        { value: `match-loser:${sourceBlock.id}`, label: `${sourceName} Verlierer` }
+      );
+    });
     return options;
   }
 
@@ -179,6 +201,9 @@ export function renderPhaseBlocks(
     const card = document.createElement("article");
     card.className = "phase-block";
     card.dataset.blockId = block.id ? String(block.id) : "";
+    card.dataset.blockType = block.block_type;
+
+    const isEinzelspiel = block.block_type === "einzelspiel";
 
     const header = document.createElement("div");
     header.className = "phase-block-head";
@@ -230,15 +255,23 @@ export function renderPhaseBlocks(
 
     const sourceTypeSelect = document.createElement("select");
     sourceTypeSelect.className = "phase-block-source-type";
-    sourceTypeSelect.innerHTML = `
-      <option value="teams">Quelle: Teams</option>
-      <option value="phase">Quelle: Platzierungen aus Phase</option>
-    `;
-    sourceTypeSelect.value = block.source_type === "phase" ? "phase" : "teams";
+    sourceTypeSelect.innerHTML = isEinzelspiel
+      ? `
+        <option value="teams">Quelle: Teams</option>
+        <option value="phase">Quelle: Platzierungen aus Phase</option>
+        <option value="match">Quelle: Spiele aus Phase</option>
+      `
+      : `
+        <option value="teams">Quelle: Teams</option>
+        <option value="phase">Quelle: Platzierungen aus Phase</option>
+      `;
+    sourceTypeSelect.value = ["phase", "match"].includes(block.source_type)
+      ? block.source_type
+      : "teams";
 
     const sourcePhaseSelect = document.createElement("select");
     sourcePhaseSelect.className = "phase-block-source-phase";
-    sourcePhaseSelect.disabled = sourceTypeSelect.value !== "phase";
+    sourcePhaseSelect.disabled = !["phase", "match"].includes(sourceTypeSelect.value);
 
     const placeholderOption = document.createElement("option");
     placeholderOption.value = "";
@@ -254,7 +287,7 @@ export function renderPhaseBlocks(
     });
 
     sourcePhaseSelect.value =
-      sourceTypeSelect.value === "phase" && Number.isInteger(Number(block.source_phase_id))
+      ["phase", "match"].includes(sourceTypeSelect.value) && Number.isInteger(Number(block.source_phase_id))
         ? String(block.source_phase_id)
         : "";
 
@@ -308,7 +341,9 @@ export function renderPhaseBlocks(
     popupInner.appendChild(blockNameInput);
     popupInner.appendChild(sourceTypeSelect);
     popupInner.appendChild(sourcePhaseSelect);
-    popupInner.appendChild(teamsPerGroupLabel);
+    if (!isEinzelspiel) {
+      popupInner.appendChild(teamsPerGroupLabel);
+    }
     popupInner.appendChild(popupActions);
     popup.appendChild(popupInner);
 
@@ -319,10 +354,10 @@ export function renderPhaseBlocks(
       ...block,
       source_type: sourceTypeSelect.value,
       source_phase_id:
-        sourceTypeSelect.value === "phase" && sourcePhaseSelect.value
+        (sourceTypeSelect.value === "phase" || sourceTypeSelect.value === "match") && sourcePhaseSelect.value
           ? Number(sourcePhaseSelect.value)
           : null,
-      teams_per_group: Math.max(2, Number(teamsPerGroupInput.value) || 4),
+      teams_per_group: isEinzelspiel ? 2 : Math.max(2, Number(teamsPerGroupInput.value) || 4),
     };
 
     const sourcePool = buildSourceOptions(currentBlock, teams, blocksByPhase);
@@ -342,6 +377,13 @@ export function renderPhaseBlocks(
     for (let slotIndex = 0; slotIndex < currentBlock.teams_per_group; slotIndex += 1) {
       const row = document.createElement("div");
       row.className = "phase-block-slot";
+
+      if (isEinzelspiel) {
+        const slotLabel = document.createElement("span");
+        slotLabel.className = "phase-block-slot-label";
+        slotLabel.textContent = slotIndex === 0 ? "Heim" : "Gast";
+        row.appendChild(slotLabel);
+      }
 
       const select = document.createElement("select");
       select.className = "phase-block-slot-select";
@@ -405,13 +447,18 @@ export function readPhaseBlocksFromContainer(container) {
       card.querySelector(".phase-block-name-input")?.value,
       position
     );
-    const sourceType = card.querySelector(".phase-block-source-type")?.value === "phase" ? "phase" : "teams";
+    const blockType = card.dataset.blockType || "gruppe";
+    const rawSourceType = card.querySelector(".phase-block-source-type")?.value || "teams";
+    const sourceType = ["phase", "match"].includes(rawSourceType) ? rawSourceType : "teams";
     const sourcePhaseValue = card.querySelector(".phase-block-source-phase")?.value || "";
-    const sourcePhaseId = sourceType === "phase" && sourcePhaseValue ? Number(sourcePhaseValue) : null;
-    const teamsPerGroup = Math.max(
-      2,
-      Number(card.querySelector(".phase-block-teams-per-group")?.value) || 4
-    );
+    const sourcePhaseId =
+      (sourceType === "phase" || sourceType === "match") && sourcePhaseValue
+        ? Number(sourcePhaseValue)
+        : null;
+    const teamsPerGroup =
+      blockType === "einzelspiel"
+        ? 2
+        : Math.max(2, Number(card.querySelector(".phase-block-teams-per-group")?.value) || 4);
 
     const slots = Array.from({ length: teamsPerGroup }, (_, slotIndex) => {
       const select = card.querySelector(`.phase-block-slot-select[data-slot-index="${slotIndex}"]`);
@@ -424,7 +471,7 @@ export function readPhaseBlocksFromContainer(container) {
     return {
       id: card.dataset.blockId ? Number(card.dataset.blockId) : null,
       block_name: blockName,
-      block_type: "gruppe",
+      block_type: blockType,
       source_type: sourceType,
       source_phase_id: sourcePhaseId,
       teams_per_group: teamsPerGroup,
@@ -446,6 +493,23 @@ export function createDefaultPhaseBlock() {
     source_type: "teams",
     source_phase_id: null,
     teams_per_group: 4,
+    position: 0,
+    slots: [],
+  };
+}
+
+/**
+ * Creates a new default Einzelspiel block payload.
+ * @returns {object} New unsaved Einzelspiel block object.
+ */
+export function createDefaultEinzelspielBlock() {
+  return {
+    id: null,
+    block_name: "",
+    block_type: "einzelspiel",
+    source_type: "teams",
+    source_phase_id: null,
+    teams_per_group: 2,
     position: 0,
     slots: [],
   };
