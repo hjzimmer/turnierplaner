@@ -1,0 +1,22 @@
+Umgesetzt: Ich habe eine vollständig unabhängige Web-Anwendung als separates Projekt außerhalb deines aktuellen Firmware-Ordners erstellt, ohne Änderungen am bestehenden Open-Project.
+
+Enthaltene Funktionen:
+
+Eingabe einer Liste mit N Elementen.
+Automatische Bildung aller eindeutigen Paar-Beziehungen nach N⋅(N−1)/2.
+Darstellung jeder Beziehung als eigene Karte untereinander.
+Drag-and-Drop-Sortierung der Karten im Browser.
+Persistente Speicherung in SQLite:
+Elemente werden gespeichert.
+Kartenreihenfolge wird nach jedem Verschieben gespeichert und beim Neuladen wiederhergestellt.
+Backend-API zum Laden, Generieren und Reorder-Persistieren.
+Wichtig:
+
+In der aktuellen Umgebung sind Node.js und npm nicht installiert, deshalb konnte ich den Server hier nicht starten oder einen Live-Test ausführen.
+Die Implementierung selbst ist vollständig angelegt.
+Nächste Schritte bei dir lokal:
+
+Node.js installieren (inkl. npm).
+Im neuen Projektordner npm install ausführen.
+Danach npm start ausführen.
+Im Browser http://localhost:3000 öffnen.

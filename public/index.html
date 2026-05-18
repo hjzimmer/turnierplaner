@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Relation Cards App</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-layout" id="appLayout">
+      <header class="topbar" role="banner">
+        <button
+          id="navToggle"
+          class="nav-toggle"
+          type="button"
+          aria-label="Navigation ein- oder ausklappen"
+          aria-expanded="true"
+        >
+          ☰
+        </button>
+        <div class="title-block">
+          <h1>Relation Cards</h1>
+          <p>Titelleiste als Platzhalter fuer spaetere Gestaltung</p>
+        </div>
+      </header>
+
+      <aside class="sidebar" id="sidebar" aria-label="Hauptnavigation">
+        <nav class="menu" aria-label="Menu">
+          <ul class="menu-level level-1">
+            <li class="menu-group is-open">
+              <button
+                class="menu-btn level-1"
+                type="button"
+                aria-expanded="true"
+                aria-controls="settingsSubmenu"
+                data-group="settings"
+              >
+                Einstellungen
+              </button>
+              <ul class="menu-level level-2" id="settingsSubmenu">
+                <li>
+                  <button
+                    class="menu-btn level-2 is-active"
+                    type="button"
+                    data-view="turniersetup"
+                  >
+                    Turniersetup
+                  </button>
+                </li>
+                <li>
+                  <button class="menu-btn level-2" type="button" data-view="teams">
+                    Teams
+                  </button>
+                </li>
+              </ul>
+            </li>
+
+            <li class="menu-group">
+              <button
+                class="menu-btn level-1"
+                type="button"
+                aria-expanded="false"
+                aria-controls="tournamentConfigSubmenu"
+                data-group="tournamentConfig"
+              >
+                Turnierkonfiguration
+              </button>
+              <ul class="menu-level level-2" id="tournamentConfigSubmenu">
+                <li>
+                  <button class="menu-btn level-2" type="button" data-view="phasen">
+                    Phasen
+                  </button>
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <main class="content" id="mainContent" role="main">
+        <section class="content-section" data-screen="turniersetup">
+          <header class="section-head">
+            <h2>Einstellungen / Turniersetup</h2>
+            <p>Vorbereitung fuer den spaeteren Ausbau der Termin-Eingaben.</p>
+          </header>
+
+          <div id="tournamentSettingsMount"></div>
+        </section>
+
+        <section class="content-section" data-screen="teams" hidden>
+          <header class="section-head">
+            <h2>Einstellungen / Teams</h2>
+            <p>Erfassung variabler Teamnamen, IDs werden intern in der Datenbank gefuehrt.</p>
+          </header>
+
+          <div id="teamsMount"></div>
+        </section>
+
+        <section class="content-section phases-full" data-screen="phasen" hidden>
+          <header class="section-head">
+            <h2>Turnierkonfiguration / Phasen</h2>
+            <p>
+              Lege Turnier-Phasen als Spalten an. Diese koennen spaeter mit
+              verschiedenen Modis befuellt werden.
+            </p>
+          </header>
+
+          <div id="phaseConfigMount"></div>
+        </section>
+      </main>
+
+      <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
