@@ -50,6 +50,14 @@ import {
   renderTournamentPlanningGroups,
   renderTournamentPlanningPhases,
 } from "./tournament-planning-layout.js";
+import {
+  loadTeamsWithIds,
+  loadMatches,
+  saveMatchesForPhase,
+  deleteMatchesForPhase,
+} from "./tournament-planning-store.js";
+import { buildScheduledMatches } from "./tournament-planning-calculations.js";
+import { renderMatchGrid } from "./tournament-planning-layout.js";
 
 const appLayout = document.getElementById("appLayout");
 const navToggle = document.getElementById("navToggle");
@@ -70,6 +78,8 @@ const settingsUi = mountTournamentSettingsLayout(settingsMount);
 const teamsUi = mountTeamsLayout(teamsMount);
 const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
 const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
+let teamsWithIds = [];
+let persistedMatches = [];
 let persistedSettings = getDefaultTournamentSettings();
 let persistedTeams = getDefaultTeams();
 let persistedPhases = getDefaultPhases();
@@ -528,11 +538,23 @@ function refreshTournamentPlanningGroups() {
 }
 
 /**
- * Populates all three control selects of the tournament planning view
- * using the current persisted phases, blocks, and setup fields count.
+ * Re-renders the match grid with current persisted planning data.
  * @returns {void}
  */
-function initializeTournamentPlanning() {
+function renderAllMatchGrid() {
+  renderMatchGrid(
+    tournamentPlanningUi.gridArea,
+    persistedMatches,
+    persistedPhases,
+    teamsWithIds
+  );
+}
+
+/**
+ * Populates planning controls and loads persisted match rows for the grid.
+ * @returns {Promise<void>} Resolves when initialization is complete.
+ */
+async function initializeTournamentPlanning() {
   renderTournamentPlanningPhases(tournamentPlanningUi.phaseSelect, persistedPhases);
   renderTournamentPlanningGroups(
     tournamentPlanningUi.groupSelect,
@@ -541,10 +563,637 @@ function initializeTournamentPlanning() {
     persistedPhases
   );
   renderTournamentPlanningFields(tournamentPlanningUi.fieldSelect, persistedSettings.fields);
+
+  try {
+    teamsWithIds = await loadTeamsWithIds();
+    persistedMatches = await loadMatches();
+  } catch {
+    persistedMatches = [];
+  }
+
+  renderAllMatchGrid();
+}
+
+/**
+ * Returns selected group refs from the group multi-select.
+ * @returns {Array<{phaseId: number, blockId: number}>} Selected phase/block refs.
+ */
+function getSelectedBlockRefs() {
+  const selectedGroupRefs = [...tournamentPlanningUi.groupSelect.selectedOptions]
+    .map((o) => {
+      const dashIdx = o.value.indexOf("-");
+      return {
+        phaseId: Number(o.value.slice(0, dashIdx)),
+        blockId: Number(o.value.slice(dashIdx + 1)),
+      };
+    })
+    .filter((ref) => ref.phaseId > 0 && ref.blockId > 0);
+  const selectedPhaseIds = new Set(readSelectedPhaseIds(tournamentPlanningUi.phaseSelect));
+  const phasesWithSelectedGroups = new Set(selectedGroupRefs.map((ref) => ref.phaseId));
+
+  let result = [...selectedGroupRefs];
+
+  selectedPhaseIds.forEach((phaseId) => {
+    if (!phasesWithSelectedGroups.has(phaseId)) {
+      const blocks = phaseBlocksByPhase.get(phaseId) || [];
+      blocks.forEach((block) => {
+        const blockId = Number(block.id);
+        if (Number.isInteger(blockId) && blockId > 0) {
+          result.push({ phaseId, blockId });
+        }
+      });
+    }
+  });
+
+  return result;
+}
+
+/**
+ * Returns selected field numbers from the field multi-select.
+ * Falls back to all available fields when none are selected.
+ * @returns {Array<number>} Selected field numbers.
+ */
+function getSelectedFieldNumbers() {
+  const selected = [...tournamentPlanningUi.fieldSelect.selectedOptions].map((o) => Number(o.value));
+  if (selected.length > 0) {
+    return selected;
+  }
+  return [...tournamentPlanningUi.fieldSelect.options]
+    .map((o) => Number(o.value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+/**
+ * Expands selected block refs with required source-phase blocks when both phases are selected.
+ * If a selected block depends on another selected phase, all blocks of that source phase are
+ * added to the planning set so the source phase is generated first.
+ * @param {Array<{phaseId: number, blockId: number}>} blockRefs Initially selected block refs.
+ * @returns {Array<{phaseId: number, blockId: number}>} Expanded unique block refs.
+ */
+function expandBlockRefsWithSelectedSources(blockRefs) {
+  const selectedPhaseIds = new Set(readSelectedPhaseIds(tournamentPlanningUi.phaseSelect));
+  const keyOf = (ref) => `${ref.phaseId}-${ref.blockId}`;
+  const included = new Set(blockRefs.map((ref) => keyOf(ref)));
+  const result = [...blockRefs];
+
+  const queue = [...blockRefs];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const phaseBlocks = phaseBlocksByPhase.get(current.phaseId) || [];
+    const block = phaseBlocks.find((entry) => Number(entry.id) === Number(current.blockId));
+    if (!block) {
+      continue;
+    }
+
+    const dependsOnPhase = block.source_type === "phase" || block.source_type === "match";
+    const sourcePhaseId = Number(block.source_phase_id);
+    if (!dependsOnPhase || !Number.isInteger(sourcePhaseId) || sourcePhaseId <= 0) {
+      continue;
+    }
+
+    if (!selectedPhaseIds.has(sourcePhaseId)) {
+      continue;
+    }
+
+    const sourceBlocks = phaseBlocksByPhase.get(sourcePhaseId) || [];
+    sourceBlocks.forEach((sourceBlock) => {
+      const sourceBlockId = Number(sourceBlock.id);
+      if (!Number.isInteger(sourceBlockId) || sourceBlockId <= 0) {
+        return;
+      }
+
+      const ref = { phaseId: sourcePhaseId, blockId: sourceBlockId };
+      const key = keyOf(ref);
+      if (included.has(key)) {
+        return;
+      }
+
+      included.add(key);
+      result.push(ref);
+      queue.push(ref);
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Validates that selected planning blocks contain configured slot entries.
+ * Aborts planning early when one or more selected blocks are empty/incomplete.
+ * @param {Array<{phaseId: number, blockId: number}>} blockRefs Selected block refs to validate.
+ * @returns {{isValid: boolean, message: string}} Validation state and user-facing message.
+ */
+function validatePlanningBlockSlots(blockRefs) {
+  const phaseNameById = new Map(persistedPhases.map((phase) => [Number(phase.id), phase.name]));
+  const issues = [];
+
+  blockRefs.forEach((ref) => {
+    const phaseId = Number(ref.phaseId);
+    const blockId = Number(ref.blockId);
+    const phaseBlocks = phaseBlocksByPhase.get(phaseId) || [];
+    const block = phaseBlocks.find((entry) => Number(entry.id) === blockId);
+    if (!block) {
+      return;
+    }
+
+    const slots = Array.isArray(block.slots) ? block.slots : [];
+    const filledSlots = slots.filter(
+      (slot) => slot && typeof slot.entry_value === "string" && slot.entry_value.trim() !== ""
+    ).length;
+
+    const minSlots = 2;
+    if (filledSlots === 0) {
+      const phaseName = phaseNameById.get(phaseId) || `Phase ${phaseId}`;
+      const blockName = block.block_name || `Block ${blockId}`;
+      issues.push(`${phaseName} / ${blockName}: keine Slot-Eintraege konfiguriert.`);
+      return;
+    }
+
+    if (filledSlots < minSlots) {
+      const phaseName = phaseNameById.get(phaseId) || `Phase ${phaseId}`;
+      const blockName = block.block_name || `Block ${blockId}`;
+      issues.push(`${phaseName} / ${blockName}: zu wenige Slot-Eintraege (${filledSlots}/${minSlots}).`);
+    }
+  });
+
+  if (issues.length > 0) {
+    return {
+      isValid: false,
+      message:
+        "Planung abgebrochen: Ausgewaehlte Gruppen/Matches sind im Phasensetup nicht vollstaendig konfiguriert.\n- " +
+        issues.join("\n- "),
+    };
+  }
+
+  return {
+    isValid: true,
+    message: "",
+  };
+}
+
+/**
+ * Adds minutes to a HH:mm time string.
+ * @param {string} baseTime Start time in HH:mm format.
+ * @param {number} minutes Minutes to add.
+ * @returns {string} Resulting time in HH:mm.
+ */
+function addMinutesToTime(baseTime, minutes) {
+  const [h, m] = String(baseTime || "00:00").split(":").map((v) => Number(v || 0));
+  const total = (h * 60 + m + minutes) % 1440;
+  const hh = Math.floor(total / 60);
+  const mm = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/**
+ * Returns configured duration of one match slot in minutes.
+ * @returns {number} Slot duration in minutes.
+ */
+function getMatchSlotDurationMinutes() {
+  const setsPerMatch = Math.max(1, Number(persistedSettings.sets_per_match) || 1);
+  const minutesPerSet = Math.max(1, Number(persistedSettings.minutes_per_set) || 10);
+  const minutesBetweenSets = Math.max(0, Number(persistedSettings.minutes_between_sets) || 0);
+  const pauseBetweenMatches = Math.max(0, Number(persistedSettings.pause_between_matches) || 0);
+  return (
+    setsPerMatch * minutesPerSet +
+    Math.max(0, setsPerMatch - 1) * minutesBetweenSets +
+    pauseBetweenMatches
+  );
+}
+
+/**
+ * Validates dependencies and returns a dependency-safe phase order.
+ * If a selected phase depends on another selected phase, the source phase
+ * is planned first automatically.
+ * @param {Array<{phaseId: number, blockId: number}>} blockRefs Blocks to plan now.
+ * @returns {{isValid: boolean, message: string, orderedBlockRefs: Array<{phaseId: number, blockId: number}>}} Validation and ordered refs.
+ */
+function resolvePlanningOrder(blockRefs) {
+  const phaseNameById = new Map(persistedPhases.map((phase) => [Number(phase.id), phase.name]));
+  const phaseIndexById = new Map(persistedPhases.map((phase, index) => [Number(phase.id), index]));
+  const plannedPhaseIds = new Set(
+    persistedMatches
+      .map((match) => Number(match.phase_id))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0)
+  );
+  const selectedPhaseIds = new Set(blockRefs.map((ref) => Number(ref.phaseId)));
+
+  const dependenciesByPhase = new Map();
+  selectedPhaseIds.forEach((phaseId) => dependenciesByPhase.set(phaseId, new Set()));
+
+  const issues = [];
+
+  blockRefs.forEach((ref) => {
+    const phaseId = Number(ref.phaseId);
+    const phaseBlocks = phaseBlocksByPhase.get(phaseId) || [];
+    const block = phaseBlocks.find((entry) => Number(entry.id) === Number(ref.blockId));
+    if (!block) {
+      return;
+    }
+
+    const dependsOnPhase = block.source_type === "phase" || block.source_type === "match";
+    const sourcePhaseId = Number(block.source_phase_id);
+    if (!dependsOnPhase || !Number.isInteger(sourcePhaseId) || sourcePhaseId <= 0) {
+      return;
+    }
+
+    const sourceAlreadyPlanned = plannedPhaseIds.has(sourcePhaseId);
+    const sourceSelectedNow = selectedPhaseIds.has(sourcePhaseId);
+
+    if (!sourceAlreadyPlanned && !sourceSelectedNow) {
+      const targetPhaseName = phaseNameById.get(phaseId) || `Phase ${phaseId}`;
+      const sourcePhaseName = phaseNameById.get(sourcePhaseId) || `Phase ${sourcePhaseId}`;
+      issues.push(`${targetPhaseName} baut auf ${sourcePhaseName} auf, diese Phase ist noch nicht geplant.`);
+      return;
+    }
+
+    if (sourceSelectedNow && sourcePhaseId !== phaseId) {
+      dependenciesByPhase.get(phaseId).add(sourcePhaseId);
+    }
+  });
+
+  if (issues.length > 0) {
+    return {
+      isValid: false,
+      message: `Planung nicht erlaubt:\n- ${issues.join("\n- ")}`,
+      orderedBlockRefs: [],
+    };
+  }
+
+  const inDegree = new Map();
+  const outgoing = new Map();
+  selectedPhaseIds.forEach((phaseId) => {
+    inDegree.set(phaseId, 0);
+    outgoing.set(phaseId, new Set());
+  });
+
+  dependenciesByPhase.forEach((deps, phaseId) => {
+    deps.forEach((depId) => {
+      inDegree.set(phaseId, (inDegree.get(phaseId) || 0) + 1);
+      outgoing.get(depId).add(phaseId);
+    });
+  });
+
+  const queue = [...selectedPhaseIds]
+    .filter((phaseId) => (inDegree.get(phaseId) || 0) === 0)
+    .sort((a, b) => (phaseIndexById.get(a) || 0) - (phaseIndexById.get(b) || 0));
+
+  const orderedPhaseIds = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    orderedPhaseIds.push(current);
+
+    const nextSet = outgoing.get(current) || new Set();
+    nextSet.forEach((nextPhaseId) => {
+      const nextDegree = (inDegree.get(nextPhaseId) || 0) - 1;
+      inDegree.set(nextPhaseId, nextDegree);
+      if (nextDegree === 0) {
+        queue.push(nextPhaseId);
+        queue.sort((a, b) => (phaseIndexById.get(a) || 0) - (phaseIndexById.get(b) || 0));
+      }
+    });
+  }
+
+  if (orderedPhaseIds.length !== selectedPhaseIds.size) {
+    return {
+      isValid: false,
+      message: "Planung nicht erlaubt: zyklische Abhaengigkeit zwischen ausgewaehlten Phasen.",
+      orderedBlockRefs: [],
+    };
+  }
+
+  const orderIndexByPhase = new Map(orderedPhaseIds.map((phaseId, index) => [phaseId, index]));
+  const orderedBlockRefs = [...blockRefs].sort(
+    (a, b) =>
+      (orderIndexByPhase.get(Number(a.phaseId)) || 0) -
+      (orderIndexByPhase.get(Number(b.phaseId)) || 0)
+  );
+
+  return {
+    isValid: true,
+    message: "",
+    orderedBlockRefs,
+  };
+}
+
+/**
+ * Handles planning generation and persists matches phase-by-phase.
+ * @returns {Promise<void>} Resolves when generation flow is complete.
+ */
+async function handleGenerateMatches() {
+  let blockRefs = getSelectedBlockRefs();
+
+  if (blockRefs.length === 0) {
+    return;
+  }
+
+  blockRefs = expandBlockRefsWithSelectedSources(blockRefs);
+
+  const slotValidation = validatePlanningBlockSlots(blockRefs);
+  if (!slotValidation.isValid) {
+    window.alert(slotValidation.message);
+    return;
+  }
+
+  const fieldNumbers = getSelectedFieldNumbers();
+  if (fieldNumbers.length === 0) {
+    return;
+  }
+
+  try {
+    teamsWithIds = await loadTeamsWithIds();
+  } catch {
+    // Keep existing in-memory team map when backend read fails.
+  }
+
+  const existingBlockIds = new Set(
+    persistedMatches.filter((m) => Number.isInteger(m.block_id)).map((m) => m.block_id)
+  );
+  const newBlockRefs = blockRefs.filter((ref) => !existingBlockIds.has(ref.blockId));
+
+  if (newBlockRefs.length === 0) {
+    return;
+  }
+
+  const planningOrder = resolvePlanningOrder(newBlockRefs);
+  if (!planningOrder.isValid) {
+    window.alert(planningOrder.message);
+    return;
+  }
+
+  const teamsByName = new Map(teamsWithIds.map((t) => [t.name, t]));
+  const newMatches = buildScheduledMatches(
+    planningOrder.orderedBlockRefs,
+    phaseBlocksByPhase,
+    teamsByName,
+    fieldNumbers,
+    persistedSettings,
+    persistedMatches
+  );
+
+  if (newMatches.length === 0) {
+    return;
+  }
+
+  const phaseOrder = [];
+  const newMatchesByPhase = new Map();
+  newMatches.forEach((m) => {
+    if (!newMatchesByPhase.has(m.phase_id)) {
+      newMatchesByPhase.set(m.phase_id, []);
+      phaseOrder.push(m.phase_id);
+    }
+    newMatchesByPhase.get(m.phase_id).push(m);
+  });
+
+  for (const phaseId of phaseOrder) {
+    const newPhaseMatches = newMatchesByPhase.get(phaseId) || [];
+    const existingPhaseMatches = persistedMatches.filter((m) => m.phase_id === phaseId);
+    const combined = [...existingPhaseMatches, ...newPhaseMatches].map((m, i) => ({
+      ...m,
+      position: i,
+    }));
+
+    try {
+      const saved = await saveMatchesForPhase(phaseId, combined);
+      persistedMatches = persistedMatches.filter((m) => m.phase_id !== phaseId).concat(saved);
+    } catch {
+      // Continue processing remaining phases.
+    }
+  }
+
+  renderAllMatchGrid();
+}
+
+/**
+ * Builds a stable ordering for one phase before persistence.
+ * @param {Array<object>} phaseMatches Match list for one phase.
+ * @returns {Array<object>} Ordered and position-indexed matches.
+ */
+function orderPhaseMatchesForSave(phaseMatches) {
+  return [...phaseMatches]
+    .sort((a, b) => {
+      const timeCmp = String(a.start_time || "").localeCompare(String(b.start_time || ""));
+      if (timeCmp !== 0) {
+        return timeCmp;
+      }
+      const fieldCmp = Number(a.field_number || 0) - Number(b.field_number || 0);
+      if (fieldCmp !== 0) {
+        return fieldCmp;
+      }
+      return Number(a.id || 0) - Number(b.id || 0);
+    })
+    .map((match, index) => ({
+      ...match,
+      position: index,
+    }));
+}
+
+/**
+ * Persists all matches of one phase and refreshes local match state.
+ * @param {number} phaseId Target phase id.
+ * @returns {Promise<void>} Resolves when save is complete.
+ */
+async function persistPhaseMatches(phaseId) {
+  const phaseMatches = persistedMatches.filter((match) => match.phase_id === phaseId);
+  const ordered = orderPhaseMatchesForSave(phaseMatches);
+  const saved = await saveMatchesForPhase(phaseId, ordered);
+  persistedMatches = persistedMatches.filter((match) => match.phase_id !== phaseId).concat(saved);
+}
+
+/**
+ * Handles moving one match card to another field/time slot and resolves collisions.
+ * Ensures only one match exists per field/time by pushing conflicting matches down.
+ * @param {number} matchId Match id being moved.
+ * @param {number} targetField Destination field number.
+ * @param {string} targetTime Destination start time.
+ * @returns {Promise<void>} Resolves when move and persistence are complete.
+ */
+async function moveMatchToSlot(matchId, targetField, targetTime) {
+  const index = persistedMatches.findIndex((match) => Number(match.id) === matchId);
+  if (index < 0) {
+    return;
+  }
+
+  const source = persistedMatches[index];
+  if (Number(source.field_number) === targetField && String(source.start_time) === targetTime) {
+    return;
+  }
+
+  const movingMatch = {
+    ...source,
+    field_number: targetField,
+    start_time: targetTime,
+  };
+
+  const slotDuration = getMatchSlotDurationMinutes();
+  const fieldMatches = persistedMatches.filter(
+    (m) => Number(m.field_number) === targetField && Number(m.id) !== Number(movingMatch.id)
+  );
+
+  /**
+   * Converts a HH:mm time string into minute-of-day value.
+   * @param {string} time Time string in HH:mm format.
+   * @returns {number} Minute-of-day value.
+   */
+  function toMinutes(time) {
+    const [h, m] = String(time || "00:00").split(":").map((v) => Number(v || 0));
+    return h * 60 + m;
+  }
+
+  const candidates = fieldMatches
+    .map((m) => ({ ...m, _desired: String(m.start_time || "00:00") }))
+    .concat({ ...movingMatch, _desired: targetTime });
+
+  candidates.sort((a, b) => {
+    const timeCmp = toMinutes(a._desired) - toMinutes(b._desired);
+    if (timeCmp !== 0) {
+      return timeCmp;
+    }
+    if (Number(a.id) === Number(matchId)) {
+      return -1;
+    }
+    if (Number(b.id) === Number(matchId)) {
+      return 1;
+    }
+    return Number(a.id || 0) - Number(b.id || 0);
+  });
+
+  const occupied = new Set();
+  const updatedById = new Map();
+  candidates.forEach((candidate) => {
+    let t = String(candidate._desired);
+    while (occupied.has(`${targetField}|${t}`)) {
+      t = addMinutesToTime(t, slotDuration);
+    }
+    occupied.add(`${targetField}|${t}`);
+    if (Number.isInteger(Number(candidate.id))) {
+      const { _desired, ...rest } = candidate;
+      updatedById.set(Number(candidate.id), {
+        ...rest,
+        field_number: targetField,
+        start_time: t,
+      });
+    }
+  });
+
+  persistedMatches = persistedMatches.map((match) => {
+    const updated = updatedById.get(Number(match.id));
+    return updated ? { ...match, ...updated } : match;
+  });
+
+  const changedPhaseIds = new Set(
+    [...updatedById.values()].map((m) => Number(m.phase_id)).filter((id) => id > 0)
+  );
+
+  try {
+    for (const phaseId of changedPhaseIds) {
+      await persistPhaseMatches(phaseId);
+    }
+  } catch {
+    // Ignore save errors and keep UI responsive.
+  }
+
+  renderAllMatchGrid();
 }
 
 tournamentPlanningUi.phaseSelect.addEventListener("change", () => {
   refreshTournamentPlanningGroups();
+});
+
+tournamentPlanningUi.generateButton.addEventListener("click", handleGenerateMatches);
+
+tournamentPlanningUi.gridArea.addEventListener("dragstart", (event) => {
+  const card = event.target.closest(".tp-match-card");
+  if (!card) {
+    return;
+  }
+
+  const matchId = card.dataset.matchId || "";
+  event.dataTransfer.setData("text/plain", matchId);
+  event.dataTransfer.effectAllowed = "move";
+  card.classList.add("is-dragging");
+});
+
+tournamentPlanningUi.gridArea.addEventListener("dragend", (event) => {
+  const card = event.target.closest(".tp-match-card");
+  if (card) {
+    card.classList.remove("is-dragging");
+  }
+
+  tournamentPlanningUi.gridArea
+    .querySelectorAll(".tp-drop-slot.is-drop-target")
+    .forEach((slot) => slot.classList.remove("is-drop-target"));
+});
+
+tournamentPlanningUi.gridArea.addEventListener("dragover", (event) => {
+  const slot = event.target.closest(".tp-drop-slot");
+  if (!slot) {
+    return;
+  }
+
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+
+  tournamentPlanningUi.gridArea
+    .querySelectorAll(".tp-drop-slot.is-drop-target")
+    .forEach((el) => {
+      if (el !== slot) {
+        el.classList.remove("is-drop-target");
+      }
+    });
+  slot.classList.add("is-drop-target");
+});
+
+tournamentPlanningUi.gridArea.addEventListener("drop", async (event) => {
+  const slot = event.target.closest(".tp-drop-slot");
+  if (!slot) {
+    return;
+  }
+
+  event.preventDefault();
+  slot.classList.remove("is-drop-target");
+
+  const matchId = Number(event.dataTransfer.getData("text/plain"));
+  const targetField = Number(slot.dataset.field);
+  const targetTime = String(slot.dataset.time || "");
+
+  if (!Number.isInteger(matchId) || matchId <= 0) {
+    return;
+  }
+  if (!Number.isInteger(targetField) || targetField <= 0) {
+    return;
+  }
+  if (!targetTime) {
+    return;
+  }
+
+  await moveMatchToSlot(matchId, targetField, targetTime);
+});
+
+tournamentPlanningUi.gridArea.addEventListener("click", async (event) => {
+  const deleteBtn = event.target.closest("[data-action='delete-phase']");
+  if (!deleteBtn) {
+    return;
+  }
+
+  const phaseId = Number(deleteBtn.dataset.phaseId);
+  if (!phaseId) {
+    return;
+  }
+
+  const phaseName = deleteBtn.dataset.phaseName || "diese Phase";
+  const confirmed = window.confirm(`Alle geplanten Matches für "${phaseName}" wirklich löschen?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    await deleteMatchesForPhase(phaseId);
+    persistedMatches = persistedMatches.filter((m) => m.phase_id !== phaseId);
+    renderAllMatchGrid();
+  } catch {
+    // no-op
+  }
 });
 
 navToggle.addEventListener("click", toggleNavigation);
@@ -575,6 +1224,7 @@ settingsUi.form.addEventListener("submit", async (event) => {
     writeTournamentSettingsToForm(settingsUi.form, saved);
     setSaveStatus(settingsUi.saveStatus, "Gespeichert");
     updateDirtyState();
+    renderTournamentPlanningFields(tournamentPlanningUi.fieldSelect, persistedSettings.fields);
   } catch (error) {
     setSaveStatus(settingsUi.saveStatus, "Speichern fehlgeschlagen", true);
     updateDirtyState();

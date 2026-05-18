@@ -301,6 +301,27 @@ async function initializeDatabase() {
 
   await createSetupTable();
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phase_id INTEGER NOT NULL,
+      block_id INTEGER,
+      block_name TEXT NOT NULL DEFAULT '',
+      team1_id INTEGER,
+      team2_id INTEGER,
+      team1_ref TEXT,
+      team2_ref TEXT,
+      referee_id INTEGER,
+      field_number INTEGER NOT NULL DEFAULT 1,
+      start_time TEXT NOT NULL DEFAULT '',
+      is_finished INTEGER NOT NULL DEFAULT 0,
+      winner_id INTEGER,
+      loser_id INTEGER,
+      position INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (phase_id) REFERENCES phases(id)
+    )
+  `);
+
   // Development mode: keep only the current schema.
   await run("DROP TABLE IF EXISTS tournament_settings");
 
@@ -1247,6 +1268,127 @@ app.put("/api/placements", async (req, res) => {
       // no-op
     }
     res.status(500).json({ error: "Failed to save placements." });
+  }
+});
+
+/**
+ * Returns all teams with their database IDs.
+ * @returns {Promise<void>} Sends teams array with id and name.
+ */
+app.get("/api/teams/with-ids", async (req, res) => {
+  try {
+    const rows = await all("SELECT id, name FROM teams ORDER BY position ASC, id ASC");
+    res.json({ teams: rows.map((r) => ({ id: r.id, name: r.name })) });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load teams with IDs." });
+  }
+});
+
+/**
+ * Returns all match records ordered by position.
+ * @returns {Promise<void>} Sends matches array.
+ */
+app.get("/api/matches", async (req, res) => {
+  try {
+    const rows = await all("SELECT * FROM matches ORDER BY position ASC, id ASC");
+    res.json({ matches: rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load matches." });
+  }
+});
+
+/**
+ * Replaces all match records for one phase atomically.
+ * @param {number} req.params.phaseId Target phase id.
+ * @param {Array<object>} req.body.matches Match records to save.
+ * @returns {Promise<void>} Sends saved matches for that phase.
+ */
+app.put("/api/matches/phase/:phaseId", async (req, res) => {
+  const phaseId = Number(req.params.phaseId);
+  if (!Number.isInteger(phaseId) || phaseId <= 0) {
+    res.status(400).json({ error: "Invalid phase id." });
+    return;
+  }
+
+  const rawMatches = Array.isArray(req.body?.matches) ? req.body.matches : [];
+
+  try {
+    await run("BEGIN TRANSACTION");
+    await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
+
+    for (let i = 0; i < rawMatches.length; i += 1) {
+      const m = rawMatches[i] || {};
+      await run(
+        `INSERT INTO matches (
+          phase_id, block_id, block_name,
+          team1_id, team2_id, team1_ref, team2_ref,
+          referee_id, field_number, start_time,
+          is_finished, winner_id, loser_id, position
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          phaseId,
+          Number.isInteger(Number(m.block_id)) && Number(m.block_id) > 0
+            ? Number(m.block_id)
+            : null,
+          normalizeString(m.block_name),
+          Number.isInteger(Number(m.team1_id)) && Number(m.team1_id) > 0
+            ? Number(m.team1_id)
+            : null,
+          Number.isInteger(Number(m.team2_id)) && Number(m.team2_id) > 0
+            ? Number(m.team2_id)
+            : null,
+          normalizeString(m.team1_ref) || null,
+          normalizeString(m.team2_ref) || null,
+          Number.isInteger(Number(m.referee_id)) && Number(m.referee_id) > 0
+            ? Number(m.referee_id)
+            : null,
+          Math.max(1, normalizeInteger(m.field_number, 1)),
+          normalizeString(m.start_time),
+          m.is_finished ? 1 : 0,
+          Number.isInteger(Number(m.winner_id)) && Number(m.winner_id) > 0
+            ? Number(m.winner_id)
+            : null,
+          Number.isInteger(Number(m.loser_id)) && Number(m.loser_id) > 0
+            ? Number(m.loser_id)
+            : null,
+          i,
+        ]
+      );
+    }
+
+    await run("COMMIT");
+    const rows = await all(
+      "SELECT * FROM matches WHERE phase_id = ? ORDER BY position ASC, id ASC",
+      [phaseId]
+    );
+    res.json({ matches: rows });
+  } catch (error) {
+    try {
+      await run("ROLLBACK");
+    } catch (_) {
+      // no-op
+    }
+    res.status(500).json({ error: "Failed to save matches." });
+  }
+});
+
+/**
+ * Deletes all match records for one phase.
+ * @param {number} req.params.phaseId Target phase id.
+ * @returns {Promise<void>} Sends ok confirmation.
+ */
+app.delete("/api/matches/phase/:phaseId", async (req, res) => {
+  const phaseId = Number(req.params.phaseId);
+  if (!Number.isInteger(phaseId) || phaseId <= 0) {
+    res.status(400).json({ error: "Invalid phase id." });
+    return;
+  }
+
+  try {
+    await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete matches." });
   }
 });
 
