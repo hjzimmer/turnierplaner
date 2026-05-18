@@ -485,6 +485,7 @@ body {
   border: 1px solid #d1deeb;
   border-radius: 10px;
   background: #ffffff;
+  position: relative;
   padding: 0.45rem;
   display: grid;
   gap: 0.4rem;
@@ -501,28 +502,83 @@ body {
   font-size: 0.84rem;
 }
 
-.phase-block-remove {
-  border: 1px solid #d6c0c0;
-  border-radius: 7px;
-  min-height: 30px;
-  padding: 0.2rem 0.45rem;
-  font: inherit;
-  font-size: 0.78rem;
-  background: #fff7f7;
-  cursor: pointer;
+.phase-block-icon-actions {
+  display: flex;
+  gap: 0.35rem;
 }
 
-.phase-block-remove:hover {
-  background: #ffecec;
+.phase-block-icon-btn {
+  border: 1px solid #b8c8dc;
+  border-radius: 9px;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  background: #ffffff;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.phase-block-icon-btn:hover {
+  background: #eef4fb;
+}
+
+.phase-block-icon-btn.is-danger:hover {
+  background: #fde8e8;
+  border-color: #efb1b1;
+}
+
+.phase-block-config-popup {
+  display: none;
+}
+
+.phase-block-config-popup.is-open {
+  display: block;
+  position: absolute;
+  inset: 0;
+  background: rgba(14, 22, 34, 0.28);
+  border-radius: 10px;
+  padding: 0.45rem;
+  z-index: 2;
 }
 
 .phase-block-config {
   display: grid;
   gap: 0.3rem;
+  background: #ffffff;
+  border: 1px solid #ccd9e7;
+  border-radius: 9px;
+  padding: 0.5rem;
+}
+
+.phase-block-config-title {
+  font-size: 0.8rem;
+}
+
+.phase-block-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.phase-block-popup-btn {
+  border: 1px solid #b8c8dc;
+  border-radius: 8px;
+  min-height: 30px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-size: 0.78rem;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.phase-block-popup-btn.is-primary {
+  border-color: #82afc0;
+  background: #dff0f0;
 }
 
 .phase-block-source-type,
 .phase-block-source-phase,
+.phase-block-name-input,
 .phase-block-teams-per-group,
 .phase-block-slot-select {
   width: 100%;
@@ -533,6 +589,16 @@ body {
   font: inherit;
   font-size: 0.82rem;
   background: #ffffff;
+  color: var(--ink);
+}
+
+.phase-block-source-phase.is-placeholder {
+  font-style: italic;
+  color: var(--muted);
+}
+
+.phase-block-source-phase option {
+  font-style: normal;
   color: var(--ink);
 }
 

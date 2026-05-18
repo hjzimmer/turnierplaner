@@ -221,6 +221,7 @@ async function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS phase_blocks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       phase_id INTEGER NOT NULL,
+      block_name TEXT NOT NULL DEFAULT '',
       block_type TEXT NOT NULL,
       source_type TEXT NOT NULL,
       source_phase_id INTEGER,
@@ -237,6 +238,12 @@ async function initializeDatabase() {
       PRIMARY KEY (block_id, slot_index)
     )
   `);
+
+  try {
+    await run("ALTER TABLE phase_blocks ADD COLUMN block_name TEXT NOT NULL DEFAULT ''");
+  } catch (error) {
+    // Column already present - no action needed.
+  }
 
   await createSetupTable();
 
@@ -566,6 +573,17 @@ function normalizePhaseBlockSourceType(value) {
 }
 
 /**
+ * Validates and normalizes phase block name values.
+ * @param {*} value Raw block name input.
+ * @param {number} position Zero-based block position.
+ * @returns {string} Normalized non-empty block name.
+ */
+function normalizePhaseBlockName(value, position) {
+  const normalized = normalizeString(value);
+  return normalized.length > 0 ? normalized : `Gruppe ${position + 1}`;
+}
+
+/**
  * Normalizes one block slot entry value.
  * @param {*} value Raw slot value.
  * @returns {string|null} Normalized slot value or null for empty.
@@ -732,7 +750,7 @@ app.put("/api/phases", async (req, res) => {
  */
 async function loadPhaseBlocksWithSlots(phaseId) {
   const blockRows = await all(
-    `SELECT id, phase_id, block_type, source_type, source_phase_id, teams_per_group, position
+    `SELECT id, phase_id, block_name, block_type, source_type, source_phase_id, teams_per_group, position
      FROM phase_blocks
      WHERE phase_id = ?
      ORDER BY position ASC, id ASC`,
@@ -766,6 +784,7 @@ async function loadPhaseBlocksWithSlots(phaseId) {
   return blockRows.map((row) => ({
     id: row.id,
     phase_id: row.phase_id,
+    block_name: row.block_name || "",
     block_type: row.block_type,
     source_type: row.source_type,
     source_phase_id: row.source_phase_id,
@@ -814,6 +833,7 @@ app.put("/api/phases/:id/blocks", async (req, res) => {
         Number.isInteger(Number(rawBlock.id)) && Number(rawBlock.id) > 0
           ? Number(rawBlock.id)
           : null;
+      const blockName = normalizePhaseBlockName(rawBlock.block_name, index);
       const blockType = normalizePhaseBlockType(rawBlock.block_type);
       const sourceType = normalizePhaseBlockSourceType(rawBlock.source_type);
       const sourcePhaseId =
@@ -827,15 +847,15 @@ app.put("/api/phases/:id/blocks", async (req, res) => {
       if (persistedBlockId) {
         await run(
           `UPDATE phase_blocks
-           SET block_type = ?, source_type = ?, source_phase_id = ?, teams_per_group = ?, position = ?
+           SET block_name = ?, block_type = ?, source_type = ?, source_phase_id = ?, teams_per_group = ?, position = ?
            WHERE id = ? AND phase_id = ?`,
-          [blockType, sourceType, sourcePhaseId, teamsPerGroup, index, persistedBlockId, phaseId]
+          [blockName, blockType, sourceType, sourcePhaseId, teamsPerGroup, index, persistedBlockId, phaseId]
         );
       } else {
         const result = await run(
-          `INSERT INTO phase_blocks (phase_id, block_type, source_type, source_phase_id, teams_per_group, position)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [phaseId, blockType, sourceType, sourcePhaseId, teamsPerGroup, index]
+          `INSERT INTO phase_blocks (phase_id, block_name, block_type, source_type, source_phase_id, teams_per_group, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [phaseId, blockName, blockType, sourceType, sourcePhaseId, teamsPerGroup, index]
         );
         persistedBlockId = result.lastID;
       }

@@ -558,6 +558,13 @@ async function handlePhaseBlockMutation(event) {
     return;
   }
 
+  const isPopupConfigControl = event.target.closest(
+    ".phase-block-name-input, .phase-block-source-type, .phase-block-source-phase, .phase-block-teams-per-group"
+  );
+  if (isPopupConfigControl) {
+    return;
+  }
+
   const slotSelect = event.target.closest(".phase-block-slot-select");
   if (slotSelect) {
     syncSlotSelectOptionsInBlock(block);
@@ -582,8 +589,32 @@ async function handlePhaseBlockMutation(event) {
 
 phasesUi.columnsContainer.addEventListener("change", handlePhaseBlockMutation);
 
+phasesUi.columnsContainer.addEventListener("phase-block-config-save", async (event) => {
+  const block = event.target.closest(".phase-block");
+  if (!block) {
+    return;
+  }
+
+  const column = block.closest(".phase-column");
+  if (!column) {
+    return;
+  }
+
+  const phaseId = Number(column.dataset.phaseId);
+  if (!phaseId) {
+    return;
+  }
+
+  try {
+    await persistBlocksForPhaseFromDom(phaseId);
+    showPhasesStatus("Baustein gespeichert");
+  } catch (error) {
+    showPhasesStatus("Baustein speichern fehlgeschlagen", true);
+  }
+});
+
 phasesUi.columnsContainer.addEventListener("click", async (event) => {
-  const removeBlockButton = event.target.closest(".phase-block-remove");
+  const removeBlockButton = event.target.closest(".phase-block-delete");
   if (!removeBlockButton) {
     return;
   }
