@@ -746,6 +746,16 @@ function addMinutesToTime(baseTime, minutes) {
 }
 
 /**
+ * Converts HH:mm time to minute-of-day number.
+ * @param {string} time Time string in HH:mm format.
+ * @returns {number} Minute-of-day value.
+ */
+function toMinutes(time) {
+  const [h, m] = String(time || "00:00").split(":").map((v) => Number(v || 0));
+  return h * 60 + m;
+}
+
+/**
  * Returns configured duration of one match slot in minutes.
  * @returns {number} Slot duration in minutes.
  */
@@ -1030,16 +1040,6 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
     (m) => Number(m.field_number) === targetField && Number(m.id) !== Number(movingMatch.id)
   );
 
-  /**
-   * Converts a HH:mm time string into minute-of-day value.
-   * @param {string} time Time string in HH:mm format.
-   * @returns {number} Minute-of-day value.
-   */
-  function toMinutes(time) {
-    const [h, m] = String(time || "00:00").split(":").map((v) => Number(v || 0));
-    return h * 60 + m;
-  }
-
   const candidates = fieldMatches
     .map((m) => ({ ...m, _desired: String(m.start_time || "00:00") }))
     .concat({ ...movingMatch, _desired: targetTime });
@@ -1159,11 +1159,120 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
   renderAllMatchGrid();
 }
 
+/**
+ * Inserts one pause slot on a field and shifts following matches on that field.
+ * Pause length is user-defined in minutes and can be independent from match duration.
+ * @returns {Promise<void>} Resolves when insertion and persistence are complete.
+ */
+async function insertPauseSlot() {
+  const selectedPhaseIds = readSelectedPhaseIds(tournamentPlanningUi.phaseSelect).filter(
+    (id) => Number.isInteger(id) && id > 0
+  );
+  if (selectedPhaseIds.length !== 1) {
+    window.alert("Bitte genau eine Phase fuer die Pause auswaehlen.");
+    return;
+  }
+
+  const selectedFields = [...tournamentPlanningUi.fieldSelect.selectedOptions].map((o) => Number(o.value));
+  const fieldFallback = getSelectedFieldNumbers();
+  const targetField = (selectedFields.length > 0 ? selectedFields[0] : fieldFallback[0]) || 1;
+
+  const slotDuration = getMatchSlotDurationMinutes();
+  const fieldMatches = persistedMatches
+    .filter((m) => Number(m.field_number) === Number(targetField))
+    .sort((a, b) => toMinutes(a.start_time) - toMinutes(b.start_time));
+
+  const suggestedStart =
+    fieldMatches.length > 0
+      ? addMinutesToTime(
+          String(fieldMatches[fieldMatches.length - 1].start_time || persistedSettings.tournament_time || "09:00"),
+          String(fieldMatches[fieldMatches.length - 1].entry_type || "match") === "pause"
+            ? Math.max(1, Number(fieldMatches[fieldMatches.length - 1].duration_minutes) || slotDuration)
+            : slotDuration
+        )
+      : persistedSettings.tournament_time || "09:00";
+
+  const inputStart = window.prompt("Startzeit der Pause (HH:mm)", suggestedStart);
+  if (inputStart === null) {
+    return;
+  }
+  const pauseStart = String(inputStart).trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(pauseStart)) {
+    window.alert("Ungueltige Startzeit. Bitte HH:mm verwenden.");
+    return;
+  }
+
+  const durationDefault = Math.max(1, slotDuration);
+  const inputDuration = window.prompt("Pausenlaenge in Minuten", String(durationDefault));
+  if (inputDuration === null) {
+    return;
+  }
+  const pauseDuration = Math.max(1, Number(inputDuration) || 0);
+  if (!Number.isFinite(pauseDuration) || pauseDuration <= 0) {
+    window.alert("Ungueltige Pausenlaenge.");
+    return;
+  }
+
+  const updatedById = new Map();
+  persistedMatches
+    .filter(
+      (m) => Number(m.field_number) === Number(targetField) && toMinutes(m.start_time) >= toMinutes(pauseStart)
+    )
+    .forEach((match) => {
+      updatedById.set(Number(match.id), {
+        ...match,
+        start_time: addMinutesToTime(String(match.start_time || pauseStart), pauseDuration),
+      });
+    });
+
+  persistedMatches = persistedMatches.map((match) => {
+    const updated = updatedById.get(Number(match.id));
+    return updated ? { ...match, ...updated } : match;
+  });
+
+  const phaseId = Number(selectedPhaseIds[0]);
+  persistedMatches.push({
+    id: null,
+    phase_id: phaseId,
+    block_id: null,
+    block_name: "Pause",
+    team1_id: null,
+    team2_id: null,
+    team1_ref: null,
+    team2_ref: null,
+    referee_id: null,
+    field_number: Number(targetField),
+    start_time: pauseStart,
+    is_finished: 0,
+    winner_id: null,
+    loser_id: null,
+    position: 0,
+    entry_type: "pause",
+    duration_minutes: pauseDuration,
+  });
+
+  const changedPhaseIds = new Set(
+    [...updatedById.values()].map((m) => Number(m.phase_id)).filter((id) => Number.isInteger(id) && id > 0)
+  );
+  changedPhaseIds.add(phaseId);
+
+  try {
+    for (const changedPhaseId of changedPhaseIds) {
+      await persistPhaseMatches(changedPhaseId);
+    }
+  } catch {
+    // Ignore save errors and keep UI responsive.
+  }
+
+  renderAllMatchGrid();
+}
+
 tournamentPlanningUi.phaseSelect.addEventListener("change", () => {
   refreshTournamentPlanningGroups();
 });
 
 tournamentPlanningUi.generateButton.addEventListener("click", handleGenerateMatches);
+tournamentPlanningUi.pauseButton.addEventListener("click", insertPauseSlot);
 
 tournamentPlanningUi.gridArea.addEventListener("dragstart", (event) => {
   const card = event.target.closest(".tp-match-card");

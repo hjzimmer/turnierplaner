@@ -314,6 +314,8 @@ async function initializeDatabase() {
       referee_id INTEGER,
       field_number INTEGER NOT NULL DEFAULT 1,
       start_time TEXT NOT NULL DEFAULT '',
+      entry_type TEXT NOT NULL DEFAULT 'match',
+      duration_minutes INTEGER NOT NULL DEFAULT 0,
       is_finished INTEGER NOT NULL DEFAULT 0,
       winner_id INTEGER,
       loser_id INTEGER,
@@ -321,6 +323,18 @@ async function initializeDatabase() {
       FOREIGN KEY (phase_id) REFERENCES phases(id)
     )
   `);
+
+  try {
+    await run("ALTER TABLE matches ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'match'");
+  } catch (_) {
+    // Column already present.
+  }
+
+  try {
+    await run("ALTER TABLE matches ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 0");
+  } catch (_) {
+    // Column already present.
+  }
 
   // Development mode: keep only the current schema.
   await run("DROP TABLE IF EXISTS tournament_settings");
@@ -1347,6 +1361,8 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
         Number.isInteger(Number(m.loser_id)) && Number(m.loser_id) > 0
           ? Number(m.loser_id)
           : null;
+      const entryType = normalizeString(m.entry_type) === "pause" ? "pause" : "match";
+      const durationMinutes = Math.max(0, normalizeInteger(m.duration_minutes, 0));
 
       if (incomingId && existingIds.has(incomingId)) {
         await run(
@@ -1354,6 +1370,7 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
            SET block_id = ?, block_name = ?,
                team1_id = ?, team2_id = ?, team1_ref = ?, team2_ref = ?,
                referee_id = ?, field_number = ?, start_time = ?,
+               entry_type = ?, duration_minutes = ?,
                is_finished = ?, winner_id = ?, loser_id = ?, position = ?
            WHERE id = ? AND phase_id = ?`,
           [
@@ -1366,6 +1383,8 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
             refereeId,
             Math.max(1, normalizeInteger(m.field_number, 1)),
             normalizeString(m.start_time),
+            entryType,
+            durationMinutes,
             m.is_finished ? 1 : 0,
             winnerId,
             loserId,
@@ -1381,8 +1400,9 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
             phase_id, block_id, block_name,
             team1_id, team2_id, team1_ref, team2_ref,
             referee_id, field_number, start_time,
+            entry_type, duration_minutes,
             is_finished, winner_id, loser_id, position
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             phaseId,
             blockId,
@@ -1394,6 +1414,8 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
             refereeId,
             Math.max(1, normalizeInteger(m.field_number, 1)),
             normalizeString(m.start_time),
+            entryType,
+            durationMinutes,
             m.is_finished ? 1 : 0,
             winnerId,
             loserId,

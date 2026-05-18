@@ -1118,6 +1118,23 @@ body {
   filter: brightness(0.95);
 }
 
+.tp-pause-btn {
+  width: 100%;
+  border: 1px solid #b8c8dc;
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tp-pause-btn:hover {
+  background: #eef4fb;
+}
+
 .tp-phase-select,
 .tp-group-select,
 .tp-field-select {
@@ -1267,6 +1284,12 @@ body {
 .tp-match-card.is-finished {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.tp-match-card.is-pause {
+  border-color: #d8b25c;
+  background: #fff8e8;
+  cursor: default;
 }
 
 .tp-match-line {

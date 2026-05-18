@@ -4,7 +4,7 @@
  * and a right-side control panel with three multi-select controls for
  * phases, groups/matches per phase, and fields.
  * @param {HTMLElement} mount Container element to mount into.
- * @returns {{ phaseSelect: HTMLSelectElement, groupSelect: HTMLSelectElement, fieldSelect: HTMLSelectElement, generateButton: HTMLButtonElement, gridArea: HTMLElement }}
+ * @returns {{ phaseSelect: HTMLSelectElement, groupSelect: HTMLSelectElement, fieldSelect: HTMLSelectElement, generateButton: HTMLButtonElement, pauseButton: HTMLButtonElement, gridArea: HTMLElement }}
  */
 export function mountTournamentPlanningLayout(mount) {
   mount.innerHTML = "";
@@ -36,6 +36,12 @@ export function mountTournamentPlanningLayout(mount) {
   generateButton.textContent = "Matches generieren";
   panel.appendChild(generateButton);
 
+  const pauseButton = document.createElement("button");
+  pauseButton.type = "button";
+  pauseButton.className = "tp-pause-btn";
+  pauseButton.textContent = "Pause einfuegen";
+  panel.appendChild(pauseButton);
+
   layout.appendChild(gridArea);
   layout.appendChild(panel);
   mount.appendChild(layout);
@@ -45,6 +51,7 @@ export function mountTournamentPlanningLayout(mount) {
     groupSelect: groupGroup.select,
     fieldSelect: fieldGroup.select,
     generateButton,
+    pauseButton,
     gridArea,
   };
 }
@@ -320,13 +327,29 @@ function buildGlobalBoard(matches, fields, timeSlots, teamNameById, phaseNameByI
  * @returns {HTMLElement} Match card article element.
  */
 function buildMatchCard(match, teamNameById, phaseNameById) {
+  const isPause = String(match.entry_type || "match") === "pause";
   const card = document.createElement("article");
-  card.className = `tp-match-card${match.is_finished ? " is-finished" : ""}`;
+  card.className = `tp-match-card${match.is_finished ? " is-finished" : ""}${isPause ? " is-pause" : ""}`;
   card.dataset.matchId = String(match.id || "");
   card.dataset.phaseId = String(match.phase_id || "");
   card.dataset.field = String(match.field_number || "");
   card.dataset.time = match.start_time || "";
-  card.draggable = true;
+  card.draggable = !isPause;
+
+  if (isPause) {
+    const pauseLine = document.createElement("div");
+    pauseLine.className = "tp-match-line";
+    const duration = Math.max(1, Number(match.duration_minutes) || 0);
+    pauseLine.textContent = `#${match.id || "neu"} Pause (${duration} min) ${match.start_time || "--:--"}`;
+
+    const pauseRef = document.createElement("div");
+    pauseRef.className = "tp-match-ref";
+    pauseRef.textContent = buildMatchReference(match, phaseNameById) || "Pausenslot";
+
+    card.appendChild(pauseLine);
+    card.appendChild(pauseRef);
+    return card;
+  }
 
   const t1Label = resolveTeamLabel(match.team1_id, match.team1_ref, teamNameById);
   const t2Label = resolveTeamLabel(match.team2_id, match.team2_ref, teamNameById);
