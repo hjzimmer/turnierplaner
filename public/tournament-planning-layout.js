@@ -218,15 +218,34 @@ export function renderMatchGrid(gridArea, matches, phases, teamsWithIds) {
 
   const phaseNameById = new Map(phases.map((p) => [p.id, p.name]));
   const teamNameById = new Map(teamsWithIds.map((t) => [t.id, t.name]));
-
-  const fields = [...new Set(matches.map((m) => Number(m.field_number)))].sort((a, b) => a - b);
-  const timeSlots = [...new Set(matches.map((m) => String(m.start_time || "")))].sort();
+  const phaseIndexById = new Map(phases.map((phase, index) => [Number(phase.id), index]));
 
   const phaseActions = buildPhaseActions(matches, phaseNameById);
   gridArea.appendChild(phaseActions);
 
-  const board = buildGlobalBoard(matches, fields, timeSlots, teamNameById, phaseNameById);
-  gridArea.appendChild(board);
+  const matchesByPhase = new Map();
+  matches.forEach((match) => {
+    const phaseId = Number(match.phase_id);
+    if (!matchesByPhase.has(phaseId)) {
+      matchesByPhase.set(phaseId, []);
+    }
+    matchesByPhase.get(phaseId).push(match);
+  });
+
+  const orderedPhaseIds = [...matchesByPhase.keys()].sort(
+    (a, b) => (phaseIndexById.get(a) ?? Number.MAX_SAFE_INTEGER) - (phaseIndexById.get(b) ?? Number.MAX_SAFE_INTEGER)
+  );
+
+  orderedPhaseIds.forEach((phaseId) => {
+    const phaseMatches = matchesByPhase.get(phaseId) || [];
+    if (phaseMatches.length === 0) {
+      return;
+    }
+
+    const phaseName = phaseNameById.get(phaseId) || `Phase ${phaseId}`;
+    const section = buildPhaseSection(phaseName, phaseMatches, teamNameById, phaseNameById);
+    gridArea.appendChild(section);
+  });
 }
 
 /**
@@ -256,15 +275,51 @@ function buildPhaseActions(matches, phaseNameById) {
 }
 
 /**
- * Builds one global board element with shared field columns and shared time rows.
- * @param {Array<object>} matches Match records for all phases.
- * @param {Array<number>} fields Ordered field numbers.
- * @param {Array<string>} timeSlots Ordered time slot labels.
+ * Builds one phase section with title bar and board table.
+ * @param {string} phaseName Display name of the phase.
+ * @param {Array<object>} matches Match records for a single phase.
  * @param {Map<number, string>} teamNameById Team id to name lookup.
  * @param {Map<number, string>} phaseNameById Phase id to name lookup.
- * @returns {HTMLElement} Completed board container.
+ * @returns {HTMLElement} Completed phase section container.
  */
-function buildGlobalBoard(matches, fields, timeSlots, teamNameById, phaseNameById) {
+function buildPhaseSection(phaseName, matches, teamNameById, phaseNameById) {
+  const section = document.createElement("section");
+  section.className = "tp-phase-section";
+
+  const band = document.createElement("div");
+  band.className = "tp-phase-band";
+
+  const icon = document.createElement("span");
+  icon.className = "tp-phase-band-icon";
+  icon.textContent = "📋";
+
+  const title = document.createElement("h3");
+  title.className = "tp-phase-band-title";
+  title.textContent = phaseName;
+
+  band.appendChild(icon);
+  band.appendChild(title);
+  section.appendChild(band);
+
+  const fields = [...new Set(matches.map((m) => Number(m.field_number)).filter((value) => value > 0))].sort(
+    (a, b) => a - b
+  );
+  const timeSlots = [...new Set(matches.map((m) => String(m.start_time || "").trim()))]
+    .filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+    .sort((a, b) => {
+      const [ah, am] = a.split(":").map(Number);
+      const [bh, bm] = b.split(":").map(Number);
+      return (ah * 60 + am) - (bh * 60 + bm);
+    });
+
+  if (fields.length === 0 || timeSlots.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "placeholder-box tp-grid-placeholder";
+    empty.textContent = "Keine Slots in dieser Phase";
+    section.appendChild(empty);
+    return section;
+  }
+
   const board = document.createElement("div");
   board.className = "tp-field-columns";
   board.style.setProperty("--tp-field-count", String(fields.length));
@@ -280,20 +335,31 @@ function buildGlobalBoard(matches, fields, timeSlots, teamNameById, phaseNameByI
   });
 
   const corner = document.createElement("div");
-  corner.className = "tp-grid-corner";
+  corner.className = "tp-grid-head-time";
+  corner.textContent = "Zeit";
   board.appendChild(corner);
 
   fields.forEach((fieldNumber) => {
-    const fieldHeader = document.createElement("h4");
-    fieldHeader.className = "tp-field-title";
+    const fieldHeader = document.createElement("div");
+    fieldHeader.className = "tp-field-head";
     fieldHeader.textContent = `Feld ${fieldNumber}`;
     board.appendChild(fieldHeader);
   });
 
   timeSlots.forEach((time) => {
     const timeLabel = document.createElement("div");
-    timeLabel.className = "tp-slot-time";
-    timeLabel.textContent = time || "--:--";
+    timeLabel.className = "tp-time-cell";
+
+    const timeValue = document.createElement("div");
+    timeValue.className = "tp-time-value";
+    timeValue.textContent = time || "--:--";
+
+    const phaseBadge = document.createElement("div");
+    phaseBadge.className = "tp-time-phase-badge";
+    phaseBadge.textContent = formatPhaseBadge(phaseName);
+
+    timeLabel.appendChild(timeValue);
+    timeLabel.appendChild(phaseBadge);
     board.appendChild(timeLabel);
 
     fields.forEach((fieldNumber) => {
@@ -315,7 +381,8 @@ function buildGlobalBoard(matches, fields, timeSlots, teamNameById, phaseNameByI
     });
   });
 
-  return board;
+  section.appendChild(board);
+  return section;
 }
 
 /**
@@ -337,15 +404,45 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
   card.draggable = !isPause;
 
   if (isPause) {
+    const pauseMeta = document.createElement("div");
+    pauseMeta.className = "tp-card-meta";
+
+    const pauseBadge = document.createElement("span");
+    pauseBadge.className = "tp-card-group-badge";
+    pauseBadge.textContent = "Pause";
+
+    const pauseMetaRight = document.createElement("div");
+    pauseMetaRight.className = "tp-card-meta-right";
+
+    const pauseRefId = document.createElement("span");
+    pauseRefId.className = "tp-card-match-number";
+    pauseRefId.textContent = `#${match.id || "neu"}`;
+
+    const deletePauseButton = document.createElement("button");
+    deletePauseButton.type = "button";
+    deletePauseButton.className = "tp-card-delete-btn";
+    deletePauseButton.dataset.action = "delete-pause";
+    deletePauseButton.dataset.matchId = String(match.id || "");
+    deletePauseButton.textContent = "🗑";
+    deletePauseButton.title = "Pause loeschen";
+    deletePauseButton.setAttribute("aria-label", "Pause loeschen");
+
+    pauseMetaRight.appendChild(pauseRefId);
+    pauseMetaRight.appendChild(deletePauseButton);
+
+    pauseMeta.appendChild(pauseBadge);
+    pauseMeta.appendChild(pauseMetaRight);
+
     const pauseLine = document.createElement("div");
-    pauseLine.className = "tp-match-line";
+    pauseLine.className = "tp-card-title";
     const duration = Math.max(1, Number(match.duration_minutes) || 0);
-    pauseLine.textContent = `#${match.id || "neu"} Pause (${duration} min) ${match.start_time || "--:--"}`;
+    pauseLine.textContent = `Pause (${duration} min)`;
 
     const pauseRef = document.createElement("div");
-    pauseRef.className = "tp-match-ref";
-    pauseRef.textContent = buildMatchReference(match, phaseNameById) || "Pausenslot";
+    pauseRef.className = "tp-card-referee";
+    pauseRef.textContent = `Hinweis: ${buildMatchReference(match, phaseNameById) || "Pausenslot"}`;
 
+    card.appendChild(pauseMeta);
     card.appendChild(pauseLine);
     card.appendChild(pauseRef);
     return card;
@@ -353,16 +450,31 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
 
   const t1Label = resolveTeamLabel(match.team1_id, match.team1_ref, teamNameById);
   const t2Label = resolveTeamLabel(match.team2_id, match.team2_ref, teamNameById);
+  const refereeLabel = resolveRefereeLabel(match, teamNameById);
+
+  const meta = document.createElement("div");
+  meta.className = "tp-card-meta";
+
+  const groupBadge = document.createElement("span");
+  groupBadge.className = "tp-card-group-badge";
+  groupBadge.textContent = resolveGroupBadge(match);
+
+  const matchNumber = document.createElement("span");
+  matchNumber.className = "tp-card-match-number";
+  matchNumber.textContent = `#${match.id || "neu"}`;
+
+  meta.appendChild(groupBadge);
+  meta.appendChild(matchNumber);
 
   const line = document.createElement("div");
-  line.className = "tp-match-line";
-  line.textContent = `#${match.id || "neu"} ${t1Label} - ${t2Label} ${match.start_time || "--:--"}`;
+  line.className = "tp-card-title";
+  line.textContent = `${t1Label} - ${t2Label}`;
 
   const refLine = document.createElement("div");
-  refLine.className = "tp-match-ref";
-  const reference = buildMatchReference(match, phaseNameById);
-  refLine.textContent = reference ? `Ref: ${reference}` : match.block_name || "";
+  refLine.className = "tp-card-referee";
+  refLine.textContent = `Schiri: ${refereeLabel}`;
 
+  card.appendChild(meta);
   card.appendChild(line);
   card.appendChild(refLine);
 
@@ -374,6 +486,61 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
   }
 
   return card;
+}
+
+/**
+ * Formats a compact phase badge label for time cells.
+ * @param {string} phaseName Phase display name.
+ * @returns {string} Short badge text for the phase.
+ */
+function formatPhaseBadge(phaseName) {
+  const trimmed = String(phaseName || "").trim();
+  if (trimmed.length === 0) {
+    return "Phase";
+  }
+  return trimmed.length > 18 ? `${trimmed.slice(0, 18)}...` : trimmed;
+}
+
+/**
+ * Resolves the visual group badge text for one match card.
+ * @param {object} match Match record from persistence.
+ * @returns {string} Group badge label.
+ */
+function resolveGroupBadge(match) {
+  const blockName = String(match.block_name || "").trim();
+  if (blockName) {
+    return blockName;
+  }
+
+  const blockType = String(match.block_type || "").trim();
+  if (blockType === "einzelspiel") {
+    return "Match";
+  }
+
+  return "Gruppe";
+}
+
+/**
+ * Resolves referee label from available fields with fallback.
+ * @param {object} match Match record from persistence.
+ * @param {Map<number, string>} teamNameById Team id to name lookup.
+ * @returns {string} Referee display text.
+ */
+function resolveRefereeLabel(match, teamNameById) {
+  const refereeId = Number(match.referee_id);
+  if (Number.isInteger(refereeId) && refereeId > 0 && teamNameById.has(refereeId)) {
+    return teamNameById.get(refereeId) || "TBD";
+  }
+
+  if (match.team1_ref && String(match.team1_ref).toLowerCase().includes("schiri")) {
+    return String(match.team1_ref);
+  }
+
+  if (match.team2_ref && String(match.team2_ref).toLowerCase().includes("schiri")) {
+    return String(match.team2_ref);
+  }
+
+  return "TBD";
 }
 
 /**
