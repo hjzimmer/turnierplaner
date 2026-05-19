@@ -320,25 +320,46 @@ body {
 }
 
 .team-rows {
+  margin-top: 0;
+}
+
+.teams-table {
+  width: 100%;
   margin-top: 0.75rem;
-  display: grid;
-  gap: 0.65rem;
+  border-collapse: collapse;
+  border: 1px solid #d5dfeb;
+  border-radius: 10px;
+  overflow: hidden;
 }
 
-.team-row {
-  display: grid;
-  grid-template-columns: 90px 1fr auto;
-  gap: 0.6rem;
-  align-items: center;
+.teams-table th,
+.teams-table td {
+  border-bottom: 1px solid #e4eaf2;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.team-row-label {
+.teams-table thead th {
+  background: #f4f8fc;
   color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.teams-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.team-cell-playable,
+.team-cell-referee,
+.team-cell-action {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .team-name-input {
+  width: 100%;
   border: 1px solid #c9d3e1;
   border-radius: 10px;
   min-height: 40px;
@@ -353,12 +374,26 @@ body {
   outline-offset: 1px;
 }
 
+.team-role-options {
+  display: inline-flex;
+  align-items: center;
+}
+
+.team-role-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .team-remove-btn,
 .add-team-btn {
   border: 1px solid #b8c8dc;
   border-radius: 10px;
-  min-height: 38px;
-  padding: 0.45rem 0.75rem;
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0.2rem 0.45rem;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -373,6 +408,8 @@ body {
 
 .add-team-btn {
   margin-top: 0.8rem;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 .phases-toolbar {
@@ -802,7 +839,12 @@ body {
   }
 
   .team-row {
-    grid-template-columns: 1fr;
+    display: table-row;
+  }
+
+  .teams-table th,
+  .teams-table td {
+    padding: 0.45rem;
   }
 }
 
@@ -1132,6 +1174,23 @@ body {
 }
 
 .tp-pause-btn:hover {
+  background: #eef4fb;
+}
+
+.tp-assign-referees-btn {
+  width: 100%;
+  border: 1px solid #b8c8dc;
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tp-assign-referees-btn:hover {
   background: #eef4fb;
 }
 

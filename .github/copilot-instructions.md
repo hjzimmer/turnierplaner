@@ -60,3 +60,14 @@ When implementing a feature or fix:
 3. Verify no editor/lint errors in changed files.
 4. Smoke-test endpoints and main interaction flow.
 5. Ensure JSDoc headers exist for added/changed functions.
+
+## Recent Work Summary
+- Added a dedicated tournament planning screen with phase, block/group, and field selection in `public/tournament-planning-layout.js` and orchestration in `public/app.js`.
+- Added planning persistence for matches in `server.js` and `public/tournament-planning-store.js`, including `GET /api/matches`, `PUT /api/matches/phase/:phaseId`, `DELETE /api/matches/phase/:phaseId`, and `GET /api/teams/with-ids`.
+- Added planning calculations in `public/tournament-planning-calculations.js` for round-robin generation, field assignment, and time-slot scheduling.
+- Added dependency-aware planning order between phases, including validation when source phases are missing.
+- Added validation that planning aborts with a clear error when selected phase blocks are not fully configured in the phase setup (for example empty slots).
+- Match drag-and-drop currently persists stable match IDs and closes source-slot gaps when a match is moved later on the same field.
+- Matches are stored without `AUTOINCREMENT`; use plain positive SQLite row IDs (`INTEGER PRIMARY KEY`).
+- Added support for pause entries in the planning board via `entry_type` and `duration_minutes` on `matches`; pause UX and scheduling behavior may still need refinement.
+- Current follow-up topics from recent work: recalculate following phase times after DnD, enforce that one team cannot appear in the same time slot twice, and refine pause insertion semantics.

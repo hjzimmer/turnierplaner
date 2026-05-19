@@ -47,7 +47,7 @@ export async function saveTournamentSettings(settings) {
 
 /**
  * Loads teams from the backend and returns a normalized list.
- * @returns {Promise<Array<{name: string}>>} Normalized teams list.
+ * @returns {Promise<Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>>} Normalized teams list.
  */
 export async function loadTeams() {
   const response = await fetch("/api/teams");
@@ -61,8 +61,8 @@ export async function loadTeams() {
 
 /**
  * Persists teams and returns the normalized saved list.
- * @param {Array<{name?: string}>} teams Team list to save.
- * @returns {Promise<Array<{name: string}>>} Normalized saved teams list.
+ * @param {Array<{name?: string, available_as_team?: boolean, available_as_referee?: boolean}>} teams Team list to save.
+ * @returns {Promise<Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>>} Normalized saved teams list.
  */
 export async function saveTeams(teams) {
   const normalized = normalizeTeams(teams);

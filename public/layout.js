@@ -205,8 +205,18 @@ export function mountTeamsLayout(targetElement) {
       <form id="teamsForm" class="settings-form" novalidate>
         <section class="settings-section">
           <h4>Teams</h4>
-          <div id="teamRows" class="team-rows"></div>
-          <button id="addTeamBtn" class="add-team-btn" type="button">+ Team hinzufuegen</button>
+          <table class="teams-table" aria-label="Teamliste">
+            <thead>
+              <tr>
+                <th scope="col">Teamname</th>
+                <th scope="col">Spielendes Team</th>
+                <th scope="col">Als Schiedsrichter</th>
+                <th scope="col">Aktion</th>
+              </tr>
+            </thead>
+            <tbody id="teamRows" class="team-rows"></tbody>
+          </table>
+          <button id="addTeamBtn" class="add-team-btn" type="button" aria-label="Team hinzufuegen">+</button>
         </section>
 
         <footer class="settings-footer">
@@ -229,15 +239,16 @@ export function mountTeamsLayout(targetElement) {
 /**
  * Creates a single editable team row element.
  * @param {string} [value=""] Initial team name value.
- * @returns {HTMLDivElement} Team row container element.
+ * @param {boolean} [availableAsTeam=true] Whether the team can be used as a playing team.
+ * @param {boolean} [availableAsReferee=false] Whether the team can be used as a referee.
+ * @returns {HTMLTableRowElement} Team row container element.
  */
-function createTeamRowElement(value = "") {
-  const row = document.createElement("div");
+function createTeamRowElement(value = "", availableAsTeam = true, availableAsReferee = false) {
+  const row = document.createElement("tr");
   row.className = "team-row";
 
-  const label = document.createElement("span");
-  label.className = "team-row-label";
-  label.textContent = "Teamname";
+  const nameCell = document.createElement("td");
+  nameCell.className = "team-cell team-cell-name";
 
   const input = document.createElement("input");
   input.className = "team-name-input";
@@ -245,30 +256,93 @@ function createTeamRowElement(value = "") {
   input.name = "team_name";
   input.autocomplete = "off";
   input.value = value;
+  nameCell.appendChild(input);
+
+  const playableCell = document.createElement("td");
+  playableCell.className = "team-cell team-cell-playable";
+
+  const playableWrap = document.createElement("div");
+  playableWrap.className = "team-role-options";
+
+  const playableLabel = document.createElement("label");
+  playableLabel.className = "team-role-option";
+
+  const playableCheckbox = document.createElement("input");
+  playableCheckbox.className = "team-playing-checkbox";
+  playableCheckbox.type = "checkbox";
+  playableCheckbox.name = "team_available_as_team";
+  playableCheckbox.checked = Boolean(availableAsTeam);
+
+  const playableText = document.createElement("span");
+  playableText.textContent = "Ja";
+
+  playableLabel.appendChild(playableCheckbox);
+  playableLabel.appendChild(playableText);
+  playableWrap.appendChild(playableLabel);
+  playableCell.appendChild(playableWrap);
+
+  const refereeCell = document.createElement("td");
+  refereeCell.className = "team-cell team-cell-referee";
+
+  const refereeWrap = document.createElement("div");
+  refereeWrap.className = "team-role-options";
+
+  const refereeLabel = document.createElement("label");
+  refereeLabel.className = "team-role-option";
+
+  const refereeCheckbox = document.createElement("input");
+  refereeCheckbox.className = "team-referee-checkbox";
+  refereeCheckbox.type = "checkbox";
+  refereeCheckbox.name = "team_available_as_referee";
+  refereeCheckbox.checked = Boolean(availableAsReferee);
+
+  const refereeText = document.createElement("span");
+  refereeText.textContent = "Ja";
+
+  refereeLabel.appendChild(refereeCheckbox);
+  refereeLabel.appendChild(refereeText);
+  refereeWrap.appendChild(refereeLabel);
+  refereeCell.appendChild(refereeWrap);
+
+  const actionCell = document.createElement("td");
+  actionCell.className = "team-cell team-cell-action";
 
   const removeButton = document.createElement("button");
   removeButton.className = "team-remove-btn";
   removeButton.type = "button";
-  removeButton.textContent = "Entfernen";
+  removeButton.textContent = "🗑";
+  removeButton.setAttribute("aria-label", "Team entfernen");
 
-  row.appendChild(label);
-  row.appendChild(input);
-  row.appendChild(removeButton);
+  actionCell.appendChild(removeButton);
+
+  row.appendChild(nameCell);
+  row.appendChild(playableCell);
+  row.appendChild(refereeCell);
+  row.appendChild(actionCell);
   return row;
 }
 
 /**
  * Re-renders all team rows from a team list.
  * @param {HTMLElement} rowsContainer Container for team rows.
- * @param {Array<{name?: string}>} teams Team list.
+ * @param {Array<{name?: string, available_as_team?: boolean, available_as_referee?: boolean}>} teams Team list.
  * @returns {void}
  */
 export function renderTeamsRows(rowsContainer, teams) {
   rowsContainer.innerHTML = "";
-  const source = Array.isArray(teams) && teams.length > 0 ? teams : [{ name: "" }];
+  const source =
+    Array.isArray(teams) && teams.length > 0
+      ? teams
+      : [{ name: "", available_as_team: true, available_as_referee: false }];
 
   source.forEach((team) => {
-    rowsContainer.appendChild(createTeamRowElement(team.name || ""));
+    rowsContainer.appendChild(
+      createTeamRowElement(
+        team.name || "",
+        team.available_as_team !== false,
+        team.available_as_referee === true
+      )
+    );
   });
 }
 
@@ -278,7 +352,7 @@ export function renderTeamsRows(rowsContainer, teams) {
  * @returns {HTMLDivElement} Newly created team row.
  */
 export function addTeamRow(rowsContainer) {
-  const row = createTeamRowElement("");
+  const row = createTeamRowElement("", true, false);
   rowsContainer.appendChild(row);
   return row;
 }
@@ -286,11 +360,15 @@ export function addTeamRow(rowsContainer) {
 /**
  * Reads all visible team names from the teams container.
  * @param {HTMLElement} rowsContainer Container for team rows.
- * @returns {Array<{name: string}>} Raw team payload from inputs.
+ * @returns {Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>} Raw team payload from inputs.
  */
 export function readTeamsFromRows(rowsContainer) {
-  const inputs = [...rowsContainer.querySelectorAll(".team-name-input")];
-  return inputs.map((input) => ({ name: input.value || "" }));
+  const rows = [...rowsContainer.querySelectorAll(".team-row")];
+  return rows.map((row) => ({
+    name: row.querySelector(".team-name-input")?.value || "",
+    available_as_team: row.querySelector(".team-playing-checkbox")?.checked === true,
+    available_as_referee: row.querySelector(".team-referee-checkbox")?.checked === true,
+  }));
 }
 
 /**

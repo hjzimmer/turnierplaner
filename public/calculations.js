@@ -58,6 +58,25 @@ function sanitizeNumber(value, fallback = 0) {
 }
 
 /**
+ * Converts a value to boolean with a fallback.
+ * @param {*} value Raw boolean-like input.
+ * @param {boolean} [fallback=false] Fallback value.
+ * @returns {boolean} Normalized boolean.
+ */
+function sanitizeBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1" || value === "true" || value === "on") {
+    return true;
+  }
+  if (value === 0 || value === "0" || value === "false" || value === "off") {
+    return false;
+  }
+  return fallback;
+}
+
+/**
  * Returns a deep copy of the default tournament settings.
  * @returns {object} Default setup object.
  */
@@ -120,7 +139,7 @@ export function normalizeSetup(rawSettings) {
 
 /**
  * Provides the default teams collection.
- * @returns {Array<{name: string}>} Empty team list.
+ * @returns {Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>} Empty team list.
  */
 export function getDefaultTeams() {
   return [];
@@ -128,8 +147,8 @@ export function getDefaultTeams() {
 
 /**
  * Normalizes a team list by trimming names and removing empty entries.
- * @param {Array<{name?: string}>} rawTeams Incoming team data.
- * @returns {Array<{name: string}>} Normalized teams.
+ * @param {Array<{name?: string, available_as_team?: boolean|number|string, available_as_referee?: boolean|number|string}>} rawTeams Incoming team data.
+ * @returns {Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>} Normalized teams.
  */
 export function normalizeTeams(rawTeams) {
   if (!Array.isArray(rawTeams)) {
@@ -137,9 +156,12 @@ export function normalizeTeams(rawTeams) {
   }
 
   return rawTeams
-    .map((team) => sanitizeString(team?.name))
-    .filter((name) => name.length > 0)
-    .map((name) => ({ name }));
+    .map((team) => ({
+      name: sanitizeString(team?.name),
+      available_as_team: sanitizeBoolean(team?.available_as_team, true),
+      available_as_referee: sanitizeBoolean(team?.available_as_referee, false),
+    }))
+    .filter((team) => team.name.length > 0);
 }
 
 /**

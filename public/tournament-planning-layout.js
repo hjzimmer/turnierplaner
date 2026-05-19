@@ -4,7 +4,7 @@
  * and a right-side control panel with three multi-select controls for
  * phases, groups/matches per phase, and fields.
  * @param {HTMLElement} mount Container element to mount into.
- * @returns {{ phaseSelect: HTMLSelectElement, groupSelect: HTMLSelectElement, fieldSelect: HTMLSelectElement, generateButton: HTMLButtonElement, pauseButton: HTMLButtonElement, gridArea: HTMLElement }}
+ * @returns {{ phaseSelect: HTMLSelectElement, groupSelect: HTMLSelectElement, fieldSelect: HTMLSelectElement, generateButton: HTMLButtonElement, pauseButton: HTMLButtonElement, assignRefereesButton: HTMLButtonElement, gridArea: HTMLElement }}
  */
 export function mountTournamentPlanningLayout(mount) {
   mount.innerHTML = "";
@@ -42,6 +42,12 @@ export function mountTournamentPlanningLayout(mount) {
   pauseButton.textContent = "Pause einfuegen";
   panel.appendChild(pauseButton);
 
+  const assignRefereesButton = document.createElement("button");
+  assignRefereesButton.type = "button";
+  assignRefereesButton.className = "tp-assign-referees-btn";
+  assignRefereesButton.textContent = "Schiedsrichter zuweisen";
+  panel.appendChild(assignRefereesButton);
+
   layout.appendChild(gridArea);
   layout.appendChild(panel);
   mount.appendChild(layout);
@@ -52,6 +58,7 @@ export function mountTournamentPlanningLayout(mount) {
     fieldSelect: fieldGroup.select,
     generateButton,
     pauseButton,
+    assignRefereesButton,
     gridArea,
   };
 }
@@ -216,8 +223,16 @@ export function renderMatchGrid(gridArea, matches, phases, teamsWithIds) {
     return;
   }
 
-  const phaseNameById = new Map(phases.map((p) => [p.id, p.name]));
-  const teamNameById = new Map(teamsWithIds.map((t) => [t.id, t.name]));
+  const phaseNameById = new Map(
+    phases
+      .map((phase) => [Number(phase.id), phase.name])
+      .filter(([phaseId]) => Number.isInteger(phaseId) && phaseId > 0)
+  );
+  const teamNameById = new Map(
+    teamsWithIds
+      .map((team) => [Number(team.id), team.name])
+      .filter(([teamId]) => Number.isInteger(teamId) && teamId > 0)
+  );
   const phaseIndexById = new Map(phases.map((phase, index) => [Number(phase.id), index]));
 
   const phaseActions = buildPhaseActions(matches, phaseNameById);
@@ -575,8 +590,9 @@ function buildMatchReference(match, phaseNameById) {
  * @returns {string} Display label for the team.
  */
 function resolveTeamLabel(teamId, teamRef, teamNameById) {
-  if (teamId) {
-    return teamNameById.get(teamId) || `Team #${teamId}`;
+  const numericTeamId = Number(teamId);
+  if (Number.isInteger(numericTeamId) && numericTeamId > 0) {
+    return teamNameById.get(numericTeamId) || `Team #${numericTeamId}`;
   }
   return teamRef || "?";
 }

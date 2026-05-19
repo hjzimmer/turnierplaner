@@ -1,6 +1,7 @@
 ok -> pause einfügen macht völligen unsinn
-bei DnD zeiten neu berechnen der folgenden Phasen und speichern
-bei DnD sicherstellen, das kein team im gleichen zeitslot mehrfach spielt
+ok -> bei DnD zeiten neu berechnen der folgenden Phasen und speichern
+ok -> bei DnD sicherstellen, das kein team im gleichen zeitslot mehrfach spielt
+
 refs definieren und spielen zuweisen
 refs bei DnD neu zuordnen
 turnier starten und liste aller spiele erzeugen, dort ergebnisse eintragen lassen, löschen, editieren

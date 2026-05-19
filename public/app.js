@@ -91,6 +91,14 @@ let placementsSaveQueued = false;
 let phaseBlocksByPhase = new Map();
 
 /**
+ * Returns teams that are flagged as playable for matches and groups.
+ * @returns {Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>} Playable teams.
+ */
+function getPlayableTeams() {
+  return persistedTeams.filter((team) => team.available_as_team !== false);
+}
+
+/**
  * Checks whether the current viewport matches mobile breakpoint rules.
  * @returns {boolean} True when mobile layout is active.
  */
@@ -338,6 +346,7 @@ async function loadAllPhaseBlocks() {
  * @returns {void}
  */
 function renderAllPhaseBlocks() {
+  const playableTeams = getPlayableTeams();
   const phases = getVisibleSavedPhases();
   phases.forEach((phase) => {
     const column = phasesUi.columnsContainer.querySelector(`[data-phase-id="${phase.id}"]`);
@@ -351,7 +360,15 @@ function renderAllPhaseBlocks() {
     }
 
     const blocks = phaseBlocksByPhase.get(phase.id) || [];
-    renderPhaseBlocks(blockContainer, phase.id, blocks, phases, persistedTeams, phaseBlocksByPhase, persistedPlacements);
+    renderPhaseBlocks(
+      blockContainer,
+      phase.id,
+      blocks,
+      phases,
+      playableTeams,
+      phaseBlocksByPhase,
+      persistedPlacements
+    );
   });
 }
 
@@ -426,7 +443,7 @@ async function persistPlacementsNow() {
   placementsSaveInFlight = true;
   try {
     const draft = readPlacementsFromUI(placementsUI.container);
-    const teamCount = persistedTeams.length;
+    const teamCount = getPlayableTeams().length;
     const saved = await savePlacements(teamCount, draft);
     persistedPlacements = saved;
     showPlacementsStatus("Platzierungen gespeichert");
@@ -478,8 +495,9 @@ function wirePlacementsAutosaveHandlers() {
  */
 async function initializePlacements() {
   try {
+    const playableTeams = getPlayableTeams();
     const loaded = await loadPlacements();
-    const teamCount = persistedTeams.length;
+    const teamCount = playableTeams.length;
     const placementsForCurrentTeamCount = loaded
       .filter((placement) => Number(placement.team_count) === teamCount)
       .sort((a, b) => Number(a.position_index) - Number(b.position_index));
@@ -496,7 +514,7 @@ async function initializePlacements() {
       placementsMount,
       persistedPlacements,
       teamCount,
-      persistedTeams,
+      playableTeams,
       persistedPhases,
       phaseBlocksByPhase
     );
@@ -514,8 +532,8 @@ async function initializePlacements() {
     renderPlacementsUI(
       placementsMount,
       [],
-      persistedTeams.length,
-      persistedTeams,
+      getPlayableTeams().length,
+      getPlayableTeams(),
       persistedPhases,
       phaseBlocksByPhase
     );
@@ -1583,11 +1601,13 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
   persistedMatches = proposedMatches;
 
   const dependencyChangedPhaseIds = recalculatePhaseTimingAfterDnD();
+  const refereeRecheckResult = recheckRefereesAfterDnD();
 
   const changedPhaseIds = new Set(
     [Number(source.phase_id), Number(proposedMovingMatch.phase_id)].filter((id) => id > 0)
   );
   dependencyChangedPhaseIds.forEach((phaseId) => changedPhaseIds.add(phaseId));
+  refereeRecheckResult.changedPhaseIds.forEach((phaseId) => changedPhaseIds.add(phaseId));
 
   try {
     for (const phaseId of changedPhaseIds) {
@@ -1823,12 +1843,445 @@ async function deletePauseSlot(pauseMatchId) {
   renderAllMatchGrid();
 }
 
+/**
+ * Checks whether one match is eligible for referee assignment.
+ * Only non-pause matches with both concrete teams are assignable.
+ * @param {object} match Match entry to validate.
+ * @returns {boolean} True when referee assignment is possible.
+ */
+function isRefereeAssignableMatch(match) {
+  if (String(match.entry_type || "match") === "pause") {
+    return false;
+  }
+
+  const team1Id = Number(match.team1_id);
+  const team2Id = Number(match.team2_id);
+  return Number.isInteger(team1Id) && team1Id > 0 && Number.isInteger(team2Id) && team2Id > 0;
+}
+
+/**
+ * Returns a set of team ids that are flagged as available referees.
+ * Team flags come from persisted team config and ids from teamsWithIds.
+ * @returns {Set<number>} Eligible referee team ids.
+ */
+function getEligibleRefereeTeamIds() {
+  const refereeFlagByName = new Map(
+    persistedTeams.map((team) => [String(team.name || "").trim(), team.available_as_referee === true])
+  );
+
+  const ids = teamsWithIds
+    .filter((team) => refereeFlagByName.get(String(team.name || "").trim()) === true)
+    .map((team) => Number(team.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  return new Set(ids);
+}
+
+/**
+ * Returns all currently playing team ids for one exact start time.
+ * @param {string} startTime HH:mm time slot.
+ * @param {number|null} [excludeMatchId=null] Match id to exclude from lookup.
+ * @returns {Set<number>} Team ids playing at that time.
+ */
+function getPlayingTeamIdsAtTime(startTime, excludeMatchId = null) {
+  const playingTeamIds = new Set();
+
+  persistedMatches.forEach((match) => {
+    if (excludeMatchId !== null && Number(match.id) === Number(excludeMatchId)) {
+      return;
+    }
+    if (!isRefereeAssignableMatch(match)) {
+      return;
+    }
+    if (String(match.start_time || "") !== startTime) {
+      return;
+    }
+
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    if (Number.isInteger(team1Id) && team1Id > 0) {
+      playingTeamIds.add(team1Id);
+    }
+    if (Number.isInteger(team2Id) && team2Id > 0) {
+      playingTeamIds.add(team2Id);
+    }
+  });
+
+  return playingTeamIds;
+}
+
+/**
+ * Returns all already assigned referee team ids for one exact start time.
+ * @param {string} startTime HH:mm time slot.
+ * @param {number|null} [excludeMatchId=null] Match id to exclude from lookup.
+ * @returns {Set<number>} Referee team ids used at that time.
+ */
+function getRefereeingTeamIdsAtTime(startTime, excludeMatchId = null) {
+  const refereeTeamIds = new Set();
+
+  persistedMatches.forEach((match) => {
+    if (excludeMatchId !== null && Number(match.id) === Number(excludeMatchId)) {
+      return;
+    }
+    if (String(match.start_time || "") !== startTime) {
+      return;
+    }
+
+    const refereeId = Number(match.referee_id);
+    if (Number.isInteger(refereeId) && refereeId > 0) {
+      refereeTeamIds.add(refereeId);
+    }
+  });
+
+  return refereeTeamIds;
+}
+
+/**
+ * Builds a lookup map for block id to block type within one phase.
+ * @param {number} phaseId Target phase id.
+ * @returns {Map<number, string>} Block id to block type.
+ */
+function getBlockTypeByIdForPhase(phaseId) {
+  const blockTypeById = new Map();
+  const blocks = phaseBlocksByPhase.get(Number(phaseId)) || [];
+
+  blocks.forEach((block) => {
+    const blockId = Number(block.id);
+    if (!Number.isInteger(blockId) || blockId <= 0) {
+      return;
+    }
+    blockTypeById.set(blockId, String(block.block_type || ""));
+  });
+
+  return blockTypeById;
+}
+
+/**
+ * Builds a lookup map for one phase: block id to team ids present in that block.
+ * @param {number} phaseId Target phase id.
+ * @returns {Map<number, Set<number>>} Block id to team id set.
+ */
+function getGroupTeamIdsByBlockForPhase(phaseId) {
+  const teamsByBlock = new Map();
+
+  persistedMatches
+    .filter((match) => Number(match.phase_id) === Number(phaseId) && isRefereeAssignableMatch(match))
+    .forEach((match) => {
+      const blockId = Number(match.block_id);
+      if (!Number.isInteger(blockId) || blockId <= 0) {
+        return;
+      }
+
+      if (!teamsByBlock.has(blockId)) {
+        teamsByBlock.set(blockId, new Set());
+      }
+
+      const teamIds = teamsByBlock.get(blockId);
+      const team1Id = Number(match.team1_id);
+      const team2Id = Number(match.team2_id);
+      if (Number.isInteger(team1Id) && team1Id > 0) {
+        teamIds.add(team1Id);
+      }
+      if (Number.isInteger(team2Id) && team2Id > 0) {
+        teamIds.add(team2Id);
+      }
+    });
+
+  return teamsByBlock;
+}
+
+/**
+ * Returns minute difference to the next own match for one team after a slot start.
+ * Infinity means no later match exists.
+ * @param {number} teamId Team id to inspect.
+ * @param {string} slotStart HH:mm start time of the current match.
+ * @returns {number} Minutes to the next match or Infinity.
+ */
+function getMinutesUntilNextPlay(teamId, slotStart) {
+  const startMinutes = toMinutes(slotStart);
+  let nextOffset = Infinity;
+
+  persistedMatches.forEach((match) => {
+    if (!isRefereeAssignableMatch(match)) {
+      return;
+    }
+
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    if (team1Id !== teamId && team2Id !== teamId) {
+      return;
+    }
+
+    const matchMinutes = toMinutes(String(match.start_time || "00:00"));
+    const offset = matchMinutes - startMinutes;
+    if (offset > 0 && offset < nextOffset) {
+      nextOffset = offset;
+    }
+  });
+
+  return nextOffset;
+}
+
+/**
+ * Chooses one referee from candidate ids using deterministic tie-breaking.
+ * Preference order: same-group (if available), no immediate next-play, fair load.
+ * @param {Array<number>} candidateIds Eligible candidates.
+ * @param {Set<number>} preferredIds Preferred candidates (same group) when available.
+ * @param {Map<number, number>} refereeCountByTeam Current assignment count per team.
+ * @param {string} matchStartTime HH:mm start time of target match.
+ * @param {number} slotDurationMinutes Slot length used for next-play check.
+ * @returns {number|null} Selected referee team id or null.
+ */
+function chooseRefereeTeamId(
+  candidateIds,
+  preferredIds,
+  refereeCountByTeam,
+  matchStartTime,
+  slotDurationMinutes
+) {
+  const preferredCandidates = candidateIds.filter((teamId) => preferredIds.has(teamId));
+  const effectiveCandidates = preferredCandidates.length > 0 ? preferredCandidates : candidateIds;
+
+  if (effectiveCandidates.length === 0) {
+    return null;
+  }
+
+  const sorted = [...effectiveCandidates].sort((leftId, rightId) => {
+    const leftCount = refereeCountByTeam.get(leftId) || 0;
+    const rightCount = refereeCountByTeam.get(rightId) || 0;
+
+    const leftNext = getMinutesUntilNextPlay(leftId, matchStartTime);
+    const rightNext = getMinutesUntilNextPlay(rightId, matchStartTime);
+    const leftImmediatePenalty = leftNext <= slotDurationMinutes ? 1 : 0;
+    const rightImmediatePenalty = rightNext <= slotDurationMinutes ? 1 : 0;
+
+    if (leftImmediatePenalty !== rightImmediatePenalty) {
+      return leftImmediatePenalty - rightImmediatePenalty;
+    }
+    if (leftCount !== rightCount) {
+      return leftCount - rightCount;
+    }
+    return leftId - rightId;
+  });
+
+  return sorted[0] || null;
+}
+
+/**
+ * Assigns referees for all provided phases using the configured rules.
+ * Only matches with fixed team ids are assigned.
+ * @param {Array<number>} phaseIds Target phase ids.
+ * @returns {{changedPhaseIds: Set<number>, assignedCount: number, plannableCount: number, missingRefereePool: boolean}} Assignment result.
+ */
+function assignRefereesForPhases(phaseIds) {
+  const targetPhaseIds = [...new Set(phaseIds.map((id) => Number(id)).filter((id) => id > 0))];
+  const changedPhaseIds = new Set();
+  if (targetPhaseIds.length === 0) {
+    return { changedPhaseIds, assignedCount: 0, plannableCount: 0, missingRefereePool: false };
+  }
+
+  const targetPhaseIdSet = new Set(targetPhaseIds);
+  const eligibleRefereeTeamIds = getEligibleRefereeTeamIds();
+  if (eligibleRefereeTeamIds.size === 0) {
+    return { changedPhaseIds, assignedCount: 0, plannableCount: 0, missingRefereePool: true };
+  }
+
+  const slotDurationMinutes = getMatchSlotDurationMinutes();
+  const phaseOrderIndexById = new Map(persistedPhases.map((phase, index) => [Number(phase.id), index]));
+  const blockTypeLookupByPhase = new Map();
+  const groupTeamIdsLookupByPhase = new Map();
+
+  targetPhaseIds.forEach((phaseId) => {
+    blockTypeLookupByPhase.set(phaseId, getBlockTypeByIdForPhase(phaseId));
+    groupTeamIdsLookupByPhase.set(phaseId, getGroupTeamIdsByBlockForPhase(phaseId));
+  });
+
+  const refereeCountByTeam = new Map();
+  persistedMatches.forEach((match) => {
+    const phaseId = Number(match.phase_id);
+    if (targetPhaseIdSet.has(phaseId)) {
+      return;
+    }
+    if (!isRefereeAssignableMatch(match)) {
+      return;
+    }
+
+    const refereeId = Number(match.referee_id);
+    if (!Number.isInteger(refereeId) || refereeId <= 0) {
+      return;
+    }
+    refereeCountByTeam.set(refereeId, (refereeCountByTeam.get(refereeId) || 0) + 1);
+  });
+
+  persistedMatches = persistedMatches.map((match) => {
+    const phaseId = Number(match.phase_id);
+    if (!targetPhaseIdSet.has(phaseId)) {
+      return match;
+    }
+
+    const hadReferee = Number(match.referee_id) > 0;
+    if (hadReferee) {
+      changedPhaseIds.add(phaseId);
+    }
+    return { ...match, referee_id: null };
+  });
+
+  const targetMatches = persistedMatches
+    .filter((match) => targetPhaseIdSet.has(Number(match.phase_id)) && isRefereeAssignableMatch(match))
+    .sort((a, b) => {
+      const timeCmp = toMinutes(String(a.start_time || "00:00")) - toMinutes(String(b.start_time || "00:00"));
+      if (timeCmp !== 0) {
+        return timeCmp;
+      }
+      const phaseCmp =
+        (phaseOrderIndexById.get(Number(a.phase_id)) ?? 9999) -
+        (phaseOrderIndexById.get(Number(b.phase_id)) ?? 9999);
+      if (phaseCmp !== 0) {
+        return phaseCmp;
+      }
+      const fieldCmp = Number(a.field_number || 0) - Number(b.field_number || 0);
+      if (fieldCmp !== 0) {
+        return fieldCmp;
+      }
+      return Number(a.id || 0) - Number(b.id || 0);
+    });
+
+  let assignedCount = 0;
+
+  targetMatches.forEach((match) => {
+    const matchId = Number(match.id);
+    const phaseId = Number(match.phase_id);
+    const startTime = String(match.start_time || "");
+
+    const blockedTeamIds = getPlayingTeamIdsAtTime(startTime, matchId);
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    if (Number.isInteger(team1Id) && team1Id > 0) {
+      blockedTeamIds.add(team1Id);
+    }
+    if (Number.isInteger(team2Id) && team2Id > 0) {
+      blockedTeamIds.add(team2Id);
+    }
+
+    const blockedRefereeIds = getRefereeingTeamIdsAtTime(startTime, matchId);
+
+    const candidateIds = [...eligibleRefereeTeamIds].filter(
+      (teamId) => !blockedTeamIds.has(teamId) && !blockedRefereeIds.has(teamId)
+    );
+
+    const blockId = Number(match.block_id);
+    const blockTypeById = blockTypeLookupByPhase.get(phaseId) || new Map();
+    const blockType = String(blockTypeById.get(blockId) || "");
+    const groupTeamIdsByBlock = groupTeamIdsLookupByPhase.get(phaseId) || new Map();
+    const sameGroupPreferredIds =
+      blockType === "gruppe" && groupTeamIdsByBlock.has(blockId)
+        ? groupTeamIdsByBlock.get(blockId)
+        : new Set();
+
+    const refereeId = chooseRefereeTeamId(
+      candidateIds,
+      sameGroupPreferredIds,
+      refereeCountByTeam,
+      startTime,
+      slotDurationMinutes
+    );
+
+    if (!Number.isInteger(refereeId) || refereeId <= 0) {
+      return;
+    }
+
+    match.referee_id = refereeId;
+    refereeCountByTeam.set(refereeId, (refereeCountByTeam.get(refereeId) || 0) + 1);
+    assignedCount += 1;
+    changedPhaseIds.add(phaseId);
+  });
+
+  return {
+    changedPhaseIds,
+    assignedCount,
+    plannableCount: targetMatches.length,
+    missingRefereePool: false,
+  };
+}
+
+/**
+ * Re-validates referee assignments after DnD for all phases that already use referees.
+ * @returns {{changedPhaseIds: Set<number>, assignedCount: number, plannableCount: number, missingRefereePool: boolean}} Re-assignment result.
+ */
+function recheckRefereesAfterDnD() {
+  const phasesWithReferees = [...new Set(
+    persistedMatches
+      .filter((match) => Number(match.referee_id) > 0)
+      .map((match) => Number(match.phase_id))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0)
+  )];
+
+  if (phasesWithReferees.length === 0) {
+    return {
+      changedPhaseIds: new Set(),
+      assignedCount: 0,
+      plannableCount: 0,
+      missingRefereePool: false,
+    };
+  }
+
+  return assignRefereesForPhases(phasesWithReferees);
+}
+
+/**
+ * Starts referee assignment for exactly one selected phase.
+ * @returns {Promise<void>} Resolves when assignment and persistence are complete.
+ */
+async function handleAssignRefereesForSelectedPhase() {
+  const selectedPhaseIds = readSelectedPhaseIds(tournamentPlanningUi.phaseSelect);
+  if (selectedPhaseIds.length !== 1) {
+    window.alert("Bitte genau eine Phase auswaehlen, um Schiedsrichter zuzuweisen.");
+    return;
+  }
+
+  try {
+    teamsWithIds = await loadTeamsWithIds();
+  } catch {
+    // Keep existing in-memory team map when backend read fails.
+  }
+
+  const targetPhaseId = Number(selectedPhaseIds[0]);
+  const plannedPhaseMatches = persistedMatches.filter(
+    (match) => Number(match.phase_id) === targetPhaseId && isRefereeAssignableMatch(match)
+  );
+
+  if (plannedPhaseMatches.length === 0) {
+    window.alert("In der ausgewaehlten Phase sind keine Matches mit festen Teams vorhanden.");
+    return;
+  }
+
+  const result = assignRefereesForPhases([targetPhaseId]);
+  if (result.missingRefereePool) {
+    window.alert("Keine Teams als Schiedsrichter markiert. Bitte zuerst in der Teamverwaltung markieren.");
+    return;
+  }
+
+  try {
+    await persistPhaseMatches(targetPhaseId);
+  } catch {
+    // Keep local state and still refresh UI.
+  }
+
+  renderAllMatchGrid();
+
+  const phaseName =
+    persistedPhases.find((phase) => Number(phase.id) === targetPhaseId)?.name ||
+    `Phase ${targetPhaseId}`;
+  window.alert(`Schiedsrichter zugewiesen: ${phaseName} (${result.assignedCount}/${result.plannableCount}).`);
+}
+
 tournamentPlanningUi.phaseSelect.addEventListener("change", () => {
   refreshTournamentPlanningGroups();
 });
 
 tournamentPlanningUi.generateButton.addEventListener("click", handleGenerateMatches);
 tournamentPlanningUi.pauseButton.addEventListener("click", insertPauseSlot);
+tournamentPlanningUi.assignRefereesButton.addEventListener("click", handleAssignRefereesForSelectedPhase);
 
 tournamentPlanningUi.gridArea.addEventListener("dragstart", (event) => {
   const card = event.target.closest(".tp-match-card");
@@ -2006,6 +2459,10 @@ teamsUi.rowsContainer.addEventListener("input", () => {
   updateTeamsDirtyState();
 });
 
+teamsUi.rowsContainer.addEventListener("change", () => {
+  updateTeamsDirtyState();
+});
+
 teamsUi.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   setSaveButtonState(teamsUi.saveButton, false);
@@ -2017,6 +2474,7 @@ teamsUi.form.addEventListener("submit", async (event) => {
     persistedTeams = saved;
     renderTeamsRows(teamsUi.rowsContainer, saved);
     renderAllPhaseBlocks();
+    await initializePlacements();
     setSaveStatus(teamsUi.saveStatus, "Gespeichert");
     updateTeamsDirtyState();
   } catch (error) {

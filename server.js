@@ -181,9 +181,23 @@ async function initializeDatabase() {
     CREATE TABLE IF NOT EXISTS teams (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
+      available_as_team INTEGER NOT NULL DEFAULT 1,
+      available_as_referee INTEGER NOT NULL DEFAULT 0,
       position INTEGER NOT NULL
     )
   `);
+
+  try {
+    await run("ALTER TABLE teams ADD COLUMN available_as_team INTEGER NOT NULL DEFAULT 1");
+  } catch (_) {
+    // Column already present.
+  }
+
+  try {
+    await run("ALTER TABLE teams ADD COLUMN available_as_referee INTEGER NOT NULL DEFAULT 0");
+  } catch (_) {
+    // Column already present.
+  }
 
   await run(`
     CREATE TABLE IF NOT EXISTS phases (
@@ -579,6 +593,25 @@ function normalizeInteger(value, fallback = 0) {
 }
 
 /**
+ * Converts a value to boolean with fallback.
+ * @param {*} value Raw boolean-like input.
+ * @param {boolean} [fallback=false] Fallback value.
+ * @returns {boolean} Normalized boolean.
+ */
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (value === 1 || value === "1" || value === "true" || value === "on") {
+    return true;
+  }
+  if (value === 0 || value === "0" || value === "false" || value === "off") {
+    return false;
+  }
+  return fallback;
+}
+
+/**
  * Normalizes setup payload into a stable validated structure.
  * @param {object} input Raw setup payload.
  * @returns {object} Normalized setup object.
@@ -613,8 +646,8 @@ function normalizeTournamentSettings(input) {
 
 /**
  * Normalizes team payload by trimming names and removing empty entries.
- * @param {Array<{name?: string}>} input Raw teams input.
- * @returns {Array<{name: string}>} Normalized teams array.
+ * @param {Array<{name?: string, available_as_team?: boolean|number|string, available_as_referee?: boolean|number|string}>} input Raw teams input.
+ * @returns {Array<{name: string, available_as_team: boolean, available_as_referee: boolean}>} Normalized teams array.
  */
 function normalizeTeams(input) {
   if (!Array.isArray(input)) {
@@ -622,9 +655,12 @@ function normalizeTeams(input) {
   }
 
   return input
-    .map((team) => normalizeString(team?.name))
-    .filter((name) => name.length > 0)
-    .map((name) => ({ name }));
+    .map((team) => ({
+      name: normalizeString(team?.name),
+      available_as_team: normalizeBoolean(team?.available_as_team, true),
+      available_as_referee: normalizeBoolean(team?.available_as_referee, false),
+    }))
+    .filter((team) => team.name.length > 0);
 }
 
 /**
@@ -795,8 +831,14 @@ app.put("/api/setup", async (req, res) => {
 
 app.get("/api/teams", async (req, res) => {
   try {
-    const rows = await all("SELECT id, name FROM teams ORDER BY position ASC, id ASC");
-    const teams = rows.map((row) => ({ name: row.name }));
+    const rows = await all(
+      "SELECT id, name, available_as_team, available_as_referee FROM teams ORDER BY position ASC, id ASC"
+    );
+    const teams = rows.map((row) => ({
+      name: row.name,
+      available_as_team: Number(row.available_as_team) === 1,
+      available_as_referee: Number(row.available_as_referee) === 1,
+    }));
     res.json({ teams });
   } catch (error) {
     res.status(500).json({ error: "Failed to load teams." });
@@ -811,7 +853,15 @@ app.put("/api/teams", async (req, res) => {
     await run("DELETE FROM teams");
 
     for (let index = 0; index < teams.length; index += 1) {
-      await run("INSERT INTO teams (name, position) VALUES (?, ?)", [teams[index].name, index]);
+      await run(
+        "INSERT INTO teams (name, available_as_team, available_as_referee, position) VALUES (?, ?, ?, ?)",
+        [
+          teams[index].name,
+          teams[index].available_as_team ? 1 : 0,
+          teams[index].available_as_referee ? 1 : 0,
+          index,
+        ]
+      );
     }
 
     await run("COMMIT");
@@ -1291,8 +1341,17 @@ app.put("/api/placements", async (req, res) => {
  */
 app.get("/api/teams/with-ids", async (req, res) => {
   try {
-    const rows = await all("SELECT id, name FROM teams ORDER BY position ASC, id ASC");
-    res.json({ teams: rows.map((r) => ({ id: r.id, name: r.name })) });
+    const rows = await all(
+      "SELECT id, name, available_as_team, available_as_referee FROM teams ORDER BY position ASC, id ASC"
+    );
+    res.json({
+      teams: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        available_as_team: Number(r.available_as_team) === 1,
+        available_as_referee: Number(r.available_as_referee) === 1,
+      })),
+    });
   } catch (error) {
     res.status(500).json({ error: "Failed to load teams with IDs." });
   }
