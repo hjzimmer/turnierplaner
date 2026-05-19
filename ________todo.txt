@@ -1,8 +1,9 @@
 ok -> pause einfügen macht völligen unsinn
 ok -> bei DnD zeiten neu berechnen der folgenden Phasen und speichern
 ok -> bei DnD sicherstellen, das kein team im gleichen zeitslot mehrfach spielt
+ok -> refs definieren und spielen zuweisen
 
-refs definieren und spielen zuweisen
+DnD zwischen den Feldern nicht sauber, kommt oft "gleichzeitig auf zwei Feldern"
 refs bei DnD neu zuordnen
 turnier starten und liste aller spiele erzeugen, dort ergebnisse eintragen lassen, löschen, editieren
 bei lsöchen und bearbeiten abhängigkeiten nach vorn und hinten beachten
