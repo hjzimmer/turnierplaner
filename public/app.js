@@ -1029,6 +1029,22 @@ async function persistPhaseMatches(phaseId) {
 }
 
 /**
+ * Recovers match state after a persistence failure by reloading from backend,
+ * re-rendering the grid, and informing the user.
+ * @param {string} userMessage Message shown in alert.
+ * @returns {Promise<void>} Resolves when recovery flow is complete.
+ */
+async function recoverMatchesAfterPersistenceFailure(userMessage) {
+  try {
+    persistedMatches = await loadMatches();
+  } catch {
+    // Keep in-memory state when backend reload fails.
+  }
+  renderAllMatchGrid();
+  window.alert(userMessage);
+}
+
+/**
  * Returns effective duration in minutes for one match entry.
  * @param {object} match Match or pause entry.
  * @param {number} defaultSlotDuration Fallback slot duration for normal matches.
@@ -1414,91 +1430,9 @@ function cloneMatchesForProposal(matches) {
 }
 
 /**
- * Returns a proposed field schedule after inserting one moved match.
- * On cross-field moves, existing target-field matches keep priority on equal desired time.
- * On same-field moves, the moved match may claim the earlier target slot and pushes later
- * matches down by slot duration.
- * @param {Array<object>} proposedMatches Proposed full match list.
- * @param {object} movedMatch Match already updated with target field/time.
- * @param {number} sourceField Original field number of the moved match.
- * @param {number} slotDuration Duration of one regular slot in minutes.
- * @returns {Map<number, string>} Match id to proposed HH:mm start time on target field.
- */
-function buildTargetFieldProposal(proposedMatches, movedMatch, sourceField, slotDuration) {
-  const targetField = Number(movedMatch.field_number);
-  const movedMatchId = Number(movedMatch.id);
-  const preferMovedOnEqualTime = Number(sourceField) === targetField;
-  const candidates = proposedMatches
-    .filter((match) => Number(match.field_number) === targetField && Number(match.id) !== movedMatchId)
-    .map((match) => ({ ...match, _desired: String(match.start_time || "00:00") }))
-    .concat({ ...movedMatch, _desired: String(movedMatch.start_time || "00:00") });
-
-  candidates.sort((a, b) => {
-    const timeCmp = toMinutes(a._desired) - toMinutes(b._desired);
-    if (timeCmp !== 0) {
-      return timeCmp;
-    }
-    if (Number(a.id) === movedMatchId) {
-      return preferMovedOnEqualTime ? -1 : 1;
-    }
-    if (Number(b.id) === movedMatchId) {
-      return preferMovedOnEqualTime ? 1 : -1;
-    }
-    return Number(a.id || 0) - Number(b.id || 0);
-  });
-
-  const nextTimeById = new Map();
-  let previousTime = "";
-  candidates.forEach((candidate) => {
-    let nextTime = String(candidate._desired || "00:00");
-    if (previousTime && toMinutes(nextTime) <= toMinutes(previousTime)) {
-      nextTime = addMinutesToTime(previousTime, slotDuration);
-    }
-    nextTimeById.set(Number(candidate.id), nextTime);
-    previousTime = nextTime;
-  });
-
-  return nextTimeById;
-}
-
-/**
- * Compacts one field in a proposed schedule forward to close the gap left by a moved match.
- * Only matches strictly after the removed start time are pulled forward.
- * @param {Array<object>} proposedMatches Proposed full match list.
- * @param {number} fieldNumber Field to compact.
- * @param {string} gapStartTime Free HH:mm slot to fill.
- * @returns {void}
- */
-function compactFieldGapInProposal(proposedMatches, fieldNumber, gapStartTime) {
-  const fieldMatches = proposedMatches
-    .filter((match) => Number(match.field_number) === Number(fieldNumber))
-    .sort((a, b) => {
-      const timeCmp = toMinutes(String(a.start_time || "00:00")) - toMinutes(String(b.start_time || "00:00"));
-      if (timeCmp !== 0) {
-        return timeCmp;
-      }
-      return Number(a.id || 0) - Number(b.id || 0);
-    });
-
-  let currentGap = String(gapStartTime || "");
-  while (currentGap) {
-    const nextMatch = fieldMatches.find(
-      (match) => toMinutes(String(match.start_time || "00:00")) > toMinutes(currentGap)
-    );
-    if (!nextMatch) {
-      return;
-    }
-
-    const previousTime = String(nextMatch.start_time || "00:00");
-    nextMatch.start_time = currentGap;
-    currentGap = previousTime;
-  }
-}
-
-/**
  * Validates a proposed schedule for hard DnD conflicts.
  * Rejects if two entries share the same field/time or if one team appears in
- * multiple matches in the same time slot.
+ * multiple matches in the same time slot on different fields.
  * @param {Array<object>} proposedMatches Proposed full match list.
  * @returns {{ isValid: boolean, message: string }} Validation result.
  */
@@ -1530,8 +1464,13 @@ function validateDnDProposal(proposedMatches) {
 
   for (const timeMatches of matchesByTime.values()) {
     for (let index = 0; index < timeMatches.length; index += 1) {
+      const matchA = timeMatches[index];
       for (let compareIndex = index + 1; compareIndex < timeMatches.length; compareIndex += 1) {
-        if (entriesShareTeam(timeMatches[index], timeMatches[compareIndex])) {
+        const matchB = timeMatches[compareIndex];
+        if (String(matchA.id) === String(matchB.id)) {
+          continue;
+        }
+        if (Number(matchA.field_number) !== Number(matchB.field_number) && entriesShareTeam(matchA, matchB)) {
           return {
             isValid: false,
             message: "Verschieben nicht moeglich: Ein Team wuerde gleichzeitig auf zwei Feldern spielen.",
@@ -1542,6 +1481,59 @@ function validateDnDProposal(proposedMatches) {
   }
 
   return { isValid: true, message: "" };
+}
+
+/**
+ * Finds one match occupying a specific field/time slot.
+ * @param {Array<object>} matches Match list to search in.
+ * @param {number} fieldNumber Target field number.
+ * @param {string} startTime Target start time (HH:mm).
+ * @param {number|null} [excludeMatchId=null] Match id to exclude from lookup.
+ * @returns {object|null} Found match or null.
+ */
+function findMatchAtSlot(matches, fieldNumber, startTime, excludeMatchId = null) {
+  return (
+    matches.find((match) => {
+      if (excludeMatchId !== null && Number(match.id) === Number(excludeMatchId)) {
+        return false;
+      }
+      return (
+        Number(match.field_number) === Number(fieldNumber) &&
+        String(match.start_time || "") === String(startTime || "")
+      );
+    }) || null
+  );
+}
+
+/**
+ * Checks whether one match conflicts with other matches in the same time slot.
+ * A conflict exists when at least one team appears in two matches at equal time
+ * on different fields.
+ * @param {Array<object>} proposedMatches Proposed full match list.
+ * @param {object} match Match to validate.
+ * @param {Set<number>} ignoredMatchIds Match ids to skip while checking.
+ * @returns {boolean} True if a parallel-team conflict exists.
+ */
+function hasParallelTeamConflictForMatch(proposedMatches, match, ignoredMatchIds) {
+  const startTime = String(match.start_time || "");
+  const fieldNumber = Number(match.field_number);
+
+  return proposedMatches.some((other) => {
+    const otherId = Number(other.id);
+    if (Number(otherId) === Number(match.id)) {
+      return false;
+    }
+    if (ignoredMatchIds.has(otherId)) {
+      return false;
+    }
+    if (String(other.start_time || "") !== startTime) {
+      return false;
+    }
+    if (Number(other.field_number) === fieldNumber) {
+      return false;
+    }
+    return entriesShareTeam(match, other);
+  });
 }
 
 /**
@@ -1563,7 +1555,6 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
     return;
   }
 
-  const slotDuration = getMatchSlotDurationMinutes();
   const proposedMatches = cloneMatchesForProposal(persistedMatches);
   const proposedMovingMatch = proposedMatches.find((match) => Number(match.id) === Number(matchId));
   if (!proposedMovingMatch) {
@@ -1572,24 +1563,45 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
 
   const sourceField = Number(source.field_number);
   const sourceTime = String(source.start_time || "");
-  proposedMovingMatch.field_number = targetField;
-  proposedMovingMatch.start_time = targetTime;
+  const targetMatch = findMatchAtSlot(proposedMatches, targetField, targetTime, matchId);
 
-  const targetFieldProposal = buildTargetFieldProposal(
-    proposedMatches,
-    proposedMovingMatch,
-    sourceField,
-    slotDuration
-  );
-  proposedMatches.forEach((match) => {
-    if (targetFieldProposal.has(Number(match.id))) {
-      match.field_number = targetField;
-      match.start_time = targetFieldProposal.get(Number(match.id)) || match.start_time;
+  if (targetMatch) {
+    // Always swap source and target match positions directly.
+    proposedMovingMatch.field_number = targetField;
+    proposedMovingMatch.start_time = targetTime;
+    targetMatch.field_number = sourceField;
+    targetMatch.start_time = sourceTime;
+
+    const movedAcrossDifferentTimes = sourceTime !== String(targetTime || "");
+    if (movedAcrossDifferentTimes) {
+      const ignoredForMoving = new Set([Number(targetMatch.id)]);
+      const ignoredForTarget = new Set([Number(proposedMovingMatch.id)]);
+      const movingHasConflict = hasParallelTeamConflictForMatch(
+        proposedMatches,
+        proposedMovingMatch,
+        ignoredForMoving
+      );
+      const targetHasConflict = hasParallelTeamConflictForMatch(
+        proposedMatches,
+        targetMatch,
+        ignoredForTarget
+      );
+
+      if (movingHasConflict || targetHasConflict) {
+        window.alert("Verschieben nicht moeglich: Ein Team wuerde gleichzeitig auf zwei Feldern spielen.");
+        return;
+      }
     }
-  });
+  } else {
+    // Empty target slot: move one match and validate only the new target slot impact.
+    proposedMovingMatch.field_number = targetField;
+    proposedMovingMatch.start_time = targetTime;
 
-  if (sourceField !== targetField) {
-    compactFieldGapInProposal(proposedMatches, sourceField, sourceTime);
+    const movingHasConflict = hasParallelTeamConflictForMatch(proposedMatches, proposedMovingMatch, new Set());
+    if (movingHasConflict) {
+      window.alert("Verschieben nicht moeglich: Ein Team wuerde gleichzeitig auf zwei Feldern spielen.");
+      return;
+    }
   }
 
   const validation = validateDnDProposal(proposedMatches);
@@ -1601,6 +1613,13 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
   persistedMatches = proposedMatches;
 
   const dependencyChangedPhaseIds = recalculatePhaseTimingAfterDnD();
+
+  try {
+    teamsWithIds = await loadTeamsWithIds();
+  } catch {
+    // Keep existing in-memory team map when backend read fails.
+  }
+
   const refereeRecheckResult = recheckRefereesAfterDnD();
 
   const changedPhaseIds = new Set(
@@ -1614,7 +1633,10 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
       await persistPhaseMatches(phaseId);
     }
   } catch {
-    // Ignore save errors and keep UI responsive.
+    await recoverMatchesAfterPersistenceFailure(
+      "Speichern fehlgeschlagen. Spielplan wurde aus der Datenbank neu geladen."
+    );
+    return;
   }
 
   renderAllMatchGrid();
@@ -1758,7 +1780,10 @@ async function insertPauseSlot() {
       await persistPhaseMatches(changedPhaseId);
     }
   } catch {
-    // Ignore save errors and keep UI responsive.
+    await recoverMatchesAfterPersistenceFailure(
+      "Pause konnte nicht gespeichert werden. Spielplan wurde aus der Datenbank neu geladen."
+    );
+    return;
   }
 
   renderAllMatchGrid();
@@ -1784,17 +1809,14 @@ async function deletePauseSlot(pauseMatchId) {
 
   const pauseDuration = Math.max(1, Number(pauseMatch.duration_minutes) || 0);
   const pauseStart = String(pauseMatch.start_time || "");
+  const removedPauseEntries = persistedMatches.filter(
+    (match) =>
+      String(match.entry_type || "match") === "pause" &&
+      String(match.start_time || "") === pauseStart
+  );
 
   // Collect ids of all pause entries on this time slot (all fields).
-  const pauseIdsOnSlot = new Set(
-    persistedMatches
-      .filter(
-        (match) =>
-          String(match.entry_type || "match") === "pause" &&
-          String(match.start_time || "") === pauseStart
-      )
-      .map((match) => Number(match.id))
-  );
+  const pauseIdsOnSlot = new Set(removedPauseEntries.map((match) => Number(match.id)));
 
   // Shift all non-pause matches that start strictly after the pause slot.
   const updatedById = new Map();
@@ -1822,12 +1844,7 @@ async function deletePauseSlot(pauseMatchId) {
     [...updatedById.values()].map((match) => Number(match.phase_id)).filter((phaseId) => phaseId > 0)
   );
   // Include phases from removed pause entries.
-  pauseIdsOnSlot.forEach((pauseId) => {
-    const removed = persistedMatches.find((m) => Number(m.id) === pauseId);
-    if (removed) {
-      changedPhaseIds.add(Number(removed.phase_id));
-    }
-  });
+  removedPauseEntries.forEach((removedPause) => changedPhaseIds.add(Number(removedPause.phase_id)));
   changedPhaseIds.add(Number(pauseMatch.phase_id));
 
   try {
@@ -1837,7 +1854,10 @@ async function deletePauseSlot(pauseMatchId) {
       }
     }
   } catch {
-    // Ignore save errors and keep UI responsive.
+    await recoverMatchesAfterPersistenceFailure(
+      "Pause konnte nicht geloescht werden. Spielplan wurde aus der Datenbank neu geladen."
+    );
+    return;
   }
 
   renderAllMatchGrid();
@@ -2389,7 +2409,9 @@ tournamentPlanningUi.gridArea.addEventListener("click", async (event) => {
     persistedMatches = persistedMatches.filter((m) => m.phase_id !== phaseId);
     renderAllMatchGrid();
   } catch {
-    // no-op
+    await recoverMatchesAfterPersistenceFailure(
+      "Phase konnte nicht geloescht werden. Spielplan wurde aus der Datenbank neu geladen."
+    );
   }
 });
 
