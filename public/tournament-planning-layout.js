@@ -596,3 +596,185 @@ function resolveTeamLabel(teamId, teamRef, teamNameById) {
   }
   return teamRef || "?";
 }
+
+/**
+ * Mounts the tabular tournament matches layout into the given container.
+ * @param {HTMLElement} mount Container element to mount into.
+ * @returns {{ tableArea: HTMLElement, phaseToggleButton: HTMLButtonElement, phaseToggleHint: HTMLElement }} References to key UI nodes.
+ */
+export function mountTournamentMatchesLayout(mount) {
+  mount.innerHTML = "";
+
+  const card = document.createElement("article");
+  card.className = "tm-card";
+
+  const controls = document.createElement("div");
+  controls.className = "tm-phase-controls";
+
+  const phaseToggleButton = document.createElement("button");
+  phaseToggleButton.type = "button";
+  phaseToggleButton.className = "tm-phase-toggle-btn";
+  phaseToggleButton.dataset.mode = "start";
+  phaseToggleButton.textContent = "Start";
+
+  const phaseToggleHint = document.createElement("span");
+  phaseToggleHint.className = "tm-phase-toggle-hint";
+  phaseToggleHint.textContent = "";
+
+  controls.appendChild(phaseToggleButton);
+  controls.appendChild(phaseToggleHint);
+
+  const tableArea = document.createElement("div");
+  tableArea.className = "tm-table-area";
+
+  const placeholder = document.createElement("div");
+  placeholder.className = "placeholder-box";
+  placeholder.textContent = "Noch keine Matches vorhanden";
+  tableArea.appendChild(placeholder);
+
+  card.appendChild(controls);
+  card.appendChild(tableArea);
+  mount.appendChild(card);
+
+  return { tableArea, phaseToggleButton, phaseToggleHint };
+}
+
+/**
+ * Renders the phase start/reset control above the match table.
+ * @param {HTMLButtonElement} phaseToggleButton Toggle button.
+ * @param {HTMLElement} phaseToggleHint Inline hint label.
+ * @param {{mode: "start"|"reset"|"done", phaseName: string, hasMatches: boolean}} state Control state.
+ * @returns {void}
+ */
+export function renderTournamentMatchesPhaseControl(phaseToggleButton, phaseToggleHint, state) {
+  const mode = String(state?.mode || "done");
+  const phaseName = String(state?.phaseName || "");
+  const hasMatches = Boolean(state?.hasMatches);
+
+  phaseToggleButton.dataset.mode = mode;
+
+  if (!hasMatches || mode === "done") {
+    phaseToggleButton.textContent = "Alle Phasen gestartet";
+    phaseToggleButton.disabled = true;
+    phaseToggleHint.textContent = hasMatches
+      ? "Es sind keine weiteren Phasen zum Starten vorhanden."
+      : "Es sind noch keine Matches vorhanden.";
+    return;
+  }
+
+  if (mode === "start") {
+    phaseToggleButton.textContent = `Start Phase ${phaseName}`;
+    phaseToggleButton.disabled = false;
+    phaseToggleHint.textContent = "Spielaktionen bleiben gesperrt, bis die Phase gestartet wurde.";
+    return;
+  }
+
+  phaseToggleButton.textContent = `Phase ${phaseName} zuruecksetzen`;
+  phaseToggleButton.disabled = false;
+  phaseToggleHint.textContent = "Zuruecksetzen ist vorbereitet und wird im naechsten Schritt implementiert.";
+}
+
+/**
+ * Renders the tabular all-matches page.
+ * @param {HTMLElement} tableArea Target table container.
+ * @param {Array<object>} rows Prepared row view-model entries.
+ * @returns {void}
+ */
+export function renderTournamentMatchesTable(tableArea, rows) {
+  tableArea.innerHTML = "";
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "placeholder-box";
+    placeholder.textContent = "Noch keine Matches vorhanden";
+    tableArea.appendChild(placeholder);
+    return;
+  }
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "tm-table-wrap";
+
+  const table = document.createElement("table");
+  table.className = "tm-table";
+
+  const thead = document.createElement("thead");
+  thead.innerHTML = `
+    <tr>
+      <th>Zeit</th>
+      <th>Feld</th>
+      <th>#</th>
+      <th>Runde</th>
+      <th>Teams</th>
+      <th>Schiedsrichter</th>
+      <th>Status</th>
+      <th>Aktion</th>
+    </tr>
+  `;
+
+  const tbody = document.createElement("tbody");
+
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+
+    const statusClass = row.isFinished ? "is-finished" : "is-open";
+    const statusText = row.isFinished ? "Beendet" : "Offen";
+    const fieldLabel = `Feld ${row.fieldNumber}`;
+
+    const actionsHtml = row.showActions
+      ? `
+        <button type="button" class="tm-action-btn is-primary" data-action="match-entry" data-match-id="${row.matchId}" ${row.actionsEnabled ? "" : "disabled"}>Eintragen</button>
+        <button type="button" class="tm-action-btn is-danger" data-action="match-delete" data-match-id="${row.matchId}" ${row.actionsEnabled ? "" : "disabled"}>Loeschen</button>
+      `
+      : "";
+
+    tr.innerHTML = `
+      <td class="tm-time">${row.startTime}</td>
+      <td><span class="tm-chip tm-chip-field">${fieldLabel}</span></td>
+      <td>${row.number}</td>
+      <td><span class="tm-chip tm-chip-round">${row.roundLabel}</span></td>
+      <td class="tm-teams">${row.teamsLabel}</td>
+      <td class="tm-ref-cell"></td>
+      <td><span class="tm-status ${statusClass}">${statusText}</span></td>
+      <td class="tm-actions">
+        ${actionsHtml}
+      </td>
+    `;
+
+    const refCell = tr.querySelector(".tm-ref-cell");
+    if (!row.canEditReferee) {
+      const text = document.createElement("span");
+      text.className = "tm-ref-static";
+      text.textContent = row.refereeLabel;
+      refCell.appendChild(text);
+    } else {
+      const select = document.createElement("select");
+      select.className = "tm-ref-select";
+      select.dataset.matchId = String(row.matchId);
+      select.dataset.phaseId = String(row.phaseId);
+
+      const noneOption = document.createElement("option");
+      noneOption.value = "";
+      noneOption.textContent = "-- Kein Schiedsrichter --";
+      select.appendChild(noneOption);
+
+      row.refereeOptions.forEach((optionEntry) => {
+        const option = document.createElement("option");
+        option.value = String(optionEntry.id);
+        option.textContent = optionEntry.unavailable
+          ? `${optionEntry.name} (nicht verfuegbar)`
+          : optionEntry.name;
+        select.appendChild(option);
+      });
+
+      select.value = row.refereeId > 0 ? String(row.refereeId) : "";
+      refCell.appendChild(select);
+    }
+
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  tableArea.appendChild(tableWrap);
+}

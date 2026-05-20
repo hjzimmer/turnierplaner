@@ -56,3 +56,44 @@ export async function deleteMatchesForPhase(phaseId) {
     throw new Error(`Matches fuer Phase ${phaseId} konnten nicht geloescht werden.`);
   }
 }
+
+/**
+ * Loads persisted started-phase state for the all-matches workflow.
+ * @returns {Promise<{startedPhaseIds: Array<number>, activePhaseId: number|null}>} Persisted phase-start state.
+ */
+export async function loadStartedMatchPhasesState() {
+  const response = await fetch("/api/matches/phases/started");
+  if (!response.ok) {
+    throw new Error("Gestartete Phasen konnten nicht geladen werden.");
+  }
+
+  const payload = await response.json();
+  const startedPhaseIds = Array.isArray(payload.startedPhaseIds)
+    ? payload.startedPhaseIds
+        .map((phaseId) => Number(phaseId))
+        .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0)
+    : [];
+
+  const activePhaseId = Number(payload.activePhaseId);
+  return {
+    startedPhaseIds,
+    activePhaseId: Number.isInteger(activePhaseId) && activePhaseId > 0 ? activePhaseId : null,
+  };
+}
+
+/**
+ * Persists started-phase state for the all-matches workflow.
+ * @param {Array<number>} startedPhaseIds Started phase ids.
+ * @param {number|null} activePhaseId Currently active started phase id.
+ * @returns {Promise<void>} Resolves when state is persisted.
+ */
+export async function saveStartedMatchPhasesState(startedPhaseIds, activePhaseId) {
+  const response = await fetch("/api/matches/phases/started", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ startedPhaseIds, activePhaseId }),
+  });
+  if (!response.ok) {
+    throw new Error("Gestartete Phasen konnten nicht gespeichert werden.");
+  }
+}

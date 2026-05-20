@@ -338,6 +338,30 @@ async function initializeDatabase() {
     )
   `);
 
+  await run(`
+    CREATE TABLE IF NOT EXISTS started_match_phases (
+      phase_id INTEGER PRIMARY KEY,
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (phase_id) REFERENCES phases(id)
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS started_match_phase_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      active_phase_id INTEGER,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (active_phase_id) REFERENCES phases(id)
+    )
+  `);
+
+  const startedStateRow = await get("SELECT id FROM started_match_phase_state WHERE id = 1");
+  if (!startedStateRow) {
+    await run(
+      "INSERT INTO started_match_phase_state (id, active_phase_id, updated_at) VALUES (1, NULL, datetime('now'))"
+    );
+  }
+
   try {
     await run("ALTER TABLE matches ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'match'");
   } catch (_) {
@@ -1367,6 +1391,87 @@ app.get("/api/matches", async (req, res) => {
     res.json({ matches: rows });
   } catch (error) {
     res.status(500).json({ error: "Failed to load matches." });
+  }
+});
+
+/**
+ * Returns persisted started-phase state for the all-matches workflow.
+ * @returns {Promise<void>} Sends startedPhaseIds and activePhaseId.
+ */
+app.get("/api/matches/phases/started", async (req, res) => {
+  try {
+    const startedRows = await all(
+      "SELECT phase_id FROM started_match_phases ORDER BY started_at ASC, phase_id ASC"
+    );
+    const stateRow = await get("SELECT active_phase_id FROM started_match_phase_state WHERE id = 1");
+
+    const startedPhaseIds = startedRows
+      .map((row) => Number(row.phase_id))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0);
+    const activePhaseId = Number(stateRow?.active_phase_id);
+
+    res.json({
+      startedPhaseIds,
+      activePhaseId: Number.isInteger(activePhaseId) && activePhaseId > 0 ? activePhaseId : null,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load started match phases state." });
+  }
+});
+
+/**
+ * Persists started-phase state for the all-matches workflow atomically.
+ * @param {Array<number>} req.body.startedPhaseIds Started phase ids.
+ * @param {number|null} req.body.activePhaseId Active started phase id.
+ * @returns {Promise<void>} Sends persisted state payload.
+ */
+app.put("/api/matches/phases/started", async (req, res) => {
+  const rawStartedIds = Array.isArray(req.body?.startedPhaseIds) ? req.body.startedPhaseIds : [];
+  const startedPhaseIds = [...new Set(
+    rawStartedIds
+      .map((phaseId) => Number(phaseId))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0)
+  )];
+
+  const rawActivePhaseId = Number(req.body?.activePhaseId);
+  const activePhaseId = Number.isInteger(rawActivePhaseId) && rawActivePhaseId > 0
+    ? rawActivePhaseId
+    : null;
+
+  if (activePhaseId !== null && !startedPhaseIds.includes(activePhaseId)) {
+    res.status(400).json({ error: "Active phase must be included in startedPhaseIds." });
+    return;
+  }
+
+  try {
+    await run("BEGIN TRANSACTION");
+
+    await run("DELETE FROM started_match_phases");
+    for (const phaseId of startedPhaseIds) {
+      await run(
+        "INSERT INTO started_match_phases (phase_id, started_at) VALUES (?, datetime('now'))",
+        [phaseId]
+      );
+    }
+
+    await run(
+      "UPDATE started_match_phase_state SET active_phase_id = ?, updated_at = datetime('now') WHERE id = 1",
+      [activePhaseId]
+    );
+
+    await run("COMMIT");
+
+    res.json({
+      startedPhaseIds,
+      activePhaseId,
+    });
+  } catch (error) {
+    try {
+      await run("ROLLBACK");
+    } catch (_) {
+      // Ignore rollback errors.
+    }
+    res.status(500).json({ error: "Failed to persist started match phases state." });
   }
 });
 

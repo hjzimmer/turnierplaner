@@ -45,16 +45,21 @@ import {
 } from "./placements-layout.js";
 import {
   mountTournamentPlanningLayout,
+  mountTournamentMatchesLayout,
   readSelectedPhaseIds,
   renderTournamentPlanningFields,
   renderTournamentPlanningGroups,
   renderTournamentPlanningPhases,
+  renderTournamentMatchesPhaseControl,
+  renderTournamentMatchesTable,
 } from "./tournament-planning-layout.js";
 import {
   loadTeamsWithIds,
   loadMatches,
   saveMatchesForPhase,
   deleteMatchesForPhase,
+  loadStartedMatchPhasesState,
+  saveStartedMatchPhasesState,
 } from "./tournament-planning-store.js";
 import { buildScheduledMatches } from "./tournament-planning-calculations.js";
 import { renderMatchGrid } from "./tournament-planning-layout.js";
@@ -71,6 +76,7 @@ const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
 const placementsMount = document.getElementById("placementsMount");
 const tournamentPlanningMount = document.getElementById("tournamentPlanningMount");
+const tournamentMatchesMount = document.getElementById("tournamentMatchesMount");
 
 const mobileQuery = window.matchMedia("(max-width: 880px)");
 
@@ -78,6 +84,7 @@ const settingsUi = mountTournamentSettingsLayout(settingsMount);
 const teamsUi = mountTeamsLayout(teamsMount);
 const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
 const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
+const tournamentMatchesUi = mountTournamentMatchesLayout(tournamentMatchesMount);
 let teamsWithIds = [];
 let persistedMatches = [];
 let persistedSettings = getDefaultTournamentSettings();
@@ -89,6 +96,69 @@ let placementsAutosaveTimer = null;
 let placementsSaveInFlight = false;
 let placementsSaveQueued = false;
 let phaseBlocksByPhase = new Map();
+let startedMatchPhaseIds = new Set();
+let activeStartedMatchPhaseId = null;
+let startedPhaseStateSaveInFlight = false;
+let startedPhaseStateSaveQueued = false;
+
+/**
+ * Returns current started-phase state payload for persistence.
+ * @returns {{ startedPhaseIds: Array<number>, activePhaseId: number|null }} Serializable state payload.
+ */
+function getStartedMatchPhaseStatePayload() {
+  return {
+    startedPhaseIds: [...startedMatchPhaseIds]
+      .map((phaseId) => Number(phaseId))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0),
+    activePhaseId:
+      Number.isInteger(activeStartedMatchPhaseId) && activeStartedMatchPhaseId > 0
+        ? Number(activeStartedMatchPhaseId)
+        : null,
+  };
+}
+
+/**
+ * Persists started-phase state for the "Alle Matches" page in the backend.
+ * Sequentializes concurrent saves and runs one queued save afterwards if needed.
+ * @returns {Promise<void>} Resolves when save flow is complete.
+ */
+async function persistStartedMatchPhaseState() {
+  if (startedPhaseStateSaveInFlight) {
+    startedPhaseStateSaveQueued = true;
+    return;
+  }
+
+  startedPhaseStateSaveInFlight = true;
+  try {
+    const payload = getStartedMatchPhaseStatePayload();
+    await saveStartedMatchPhasesState(payload.startedPhaseIds, payload.activePhaseId);
+  } catch {
+    // Keep runtime state if persistence fails.
+  } finally {
+    startedPhaseStateSaveInFlight = false;
+    if (startedPhaseStateSaveQueued) {
+      startedPhaseStateSaveQueued = false;
+      await persistStartedMatchPhaseState();
+    }
+  }
+}
+
+/**
+ * Restores started-phase state for the "Alle Matches" page from backend.
+ * @returns {Promise<void>} Resolves when restore flow is complete.
+ */
+async function restoreStartedMatchPhaseState() {
+  try {
+    const state = await loadStartedMatchPhasesState();
+    startedMatchPhaseIds = new Set(state.startedPhaseIds || []);
+    activeStartedMatchPhaseId = Number.isInteger(Number(state.activePhaseId)) && Number(state.activePhaseId) > 0
+      ? Number(state.activePhaseId)
+      : null;
+  } catch {
+    startedMatchPhaseIds = new Set();
+    activeStartedMatchPhaseId = null;
+  }
+}
 
 /**
  * Returns teams that are flagged as playable for matches and groups.
@@ -162,6 +232,10 @@ function openView(viewName) {
     const isVisible = section.dataset.screen === viewName;
     section.hidden = !isVisible;
   });
+
+  if (viewName === "turnierplanung-matches") {
+    renderAllTournamentMatchesTable();
+  }
 
   if (isMobile()) {
     appLayout.classList.remove("is-open-mobile");
@@ -566,6 +640,247 @@ function renderAllMatchGrid() {
     persistedPhases,
     teamsWithIds
   );
+  renderAllTournamentMatchesTable();
+}
+
+/**
+ * Returns phase ids that currently have planned matches in persisted phase order.
+ * @returns {Array<number>} Ordered phase ids with matches.
+ */
+function getPlannedPhaseIdsInOrder() {
+  const phaseIndexById = new Map(persistedPhases.map((phase, index) => [Number(phase.id), index]));
+  const phaseIds = [...new Set(
+    persistedMatches
+      .map((match) => Number(match.phase_id))
+      .filter((phaseId) => Number.isInteger(phaseId) && phaseId > 0)
+  )];
+
+  return phaseIds.sort(
+    (leftId, rightId) =>
+      (phaseIndexById.get(leftId) ?? Number.MAX_SAFE_INTEGER) -
+      (phaseIndexById.get(rightId) ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+/**
+ * Synchronizes local started-phase state with currently planned phase ids.
+ * @param {Array<number>} plannedPhaseIds Ordered phase ids with matches.
+ * @returns {void}
+ */
+function syncStartedMatchPhaseState(plannedPhaseIds) {
+  const beforeStarted = [...startedMatchPhaseIds].sort((a, b) => a - b).join(",");
+  const beforeActive = Number.isInteger(activeStartedMatchPhaseId) ? Number(activeStartedMatchPhaseId) : null;
+
+  const plannedSet = new Set(plannedPhaseIds);
+  startedMatchPhaseIds = new Set(
+    [...startedMatchPhaseIds].filter((phaseId) => plannedSet.has(Number(phaseId)))
+  );
+
+  if (!Number.isInteger(activeStartedMatchPhaseId) || !plannedSet.has(Number(activeStartedMatchPhaseId))) {
+    activeStartedMatchPhaseId = null;
+  }
+
+  if (activeStartedMatchPhaseId === null && startedMatchPhaseIds.size > 0) {
+    activeStartedMatchPhaseId = plannedPhaseIds.find((phaseId) => startedMatchPhaseIds.has(phaseId)) || null;
+  }
+
+  const afterStarted = [...startedMatchPhaseIds].sort((a, b) => a - b).join(",");
+  const afterActive = Number.isInteger(activeStartedMatchPhaseId) ? Number(activeStartedMatchPhaseId) : null;
+  if (beforeStarted !== afterStarted || beforeActive !== afterActive) {
+    void persistStartedMatchPhaseState();
+  }
+}
+
+/**
+ * Returns the next not-yet-started phase id from planned phase order.
+ * @param {Array<number>} plannedPhaseIds Ordered phase ids with matches.
+ * @returns {number|null} Next phase id to start or null.
+ */
+function getNextNotStartedPhaseId(plannedPhaseIds) {
+  return plannedPhaseIds.find((phaseId) => !startedMatchPhaseIds.has(phaseId)) || null;
+}
+
+/**
+ * Returns display name for a phase id.
+ * @param {number|null} phaseId Phase id.
+ * @returns {string} Display name.
+ */
+function getPhaseDisplayName(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  const phaseName = persistedPhases.find((phase) => Number(phase.id) === numericPhaseId)?.name;
+  const trimmedPhaseName = String(phaseName || "").trim();
+  if (trimmedPhaseName) {
+    return trimmedPhaseName.replace(/^phase\s+/i, "").trim();
+  }
+  return String(numericPhaseId);
+}
+
+/**
+ * Returns whether match schedule changes are locked for a phase.
+ * @param {number} phaseId Phase id to check.
+ * @returns {boolean} True when phase has been started and schedule is locked.
+ */
+function isPhaseScheduleLocked(phaseId) {
+  return startedMatchPhaseIds.has(Number(phaseId));
+}
+
+/**
+ * Resolves a readable team label for one id.
+ * @param {number|null} teamId Team id to resolve.
+ * @param {Map<number, string>} teamNameById Team lookup map.
+ * @returns {string} Display label.
+ */
+function getTeamNameLabel(teamId, teamNameById) {
+  const numericId = Number(teamId);
+  if (Number.isInteger(numericId) && numericId > 0) {
+    return teamNameById.get(numericId) || `Team #${numericId}`;
+  }
+  return "?";
+}
+
+/**
+ * Builds available referee option entries for one match and time slot.
+ * @param {object} match Match to edit.
+ * @param {Map<number, string>} teamNameById Team id to display name lookup.
+ * @returns {Array<{id: number, name: string, unavailable: boolean}>} Dropdown options.
+ */
+function getRefereeOptionsForMatch(match, teamNameById) {
+  if (!isRefereeAssignableMatch(match)) {
+    return [];
+  }
+
+  const matchId = Number(match.id);
+  const startTime = String(match.start_time || "");
+
+  const blockedTeamIds = getPlayingTeamIdsAtTime(startTime, matchId);
+  const team1Id = Number(match.team1_id);
+  const team2Id = Number(match.team2_id);
+  if (Number.isInteger(team1Id) && team1Id > 0) {
+    blockedTeamIds.add(team1Id);
+  }
+  if (Number.isInteger(team2Id) && team2Id > 0) {
+    blockedTeamIds.add(team2Id);
+  }
+
+  const blockedRefereeIds = getRefereeingTeamIdsAtTime(startTime, matchId);
+  const eligibleRefereeIds = getEligibleRefereeTeamIds();
+
+  const availableIds = [...eligibleRefereeIds]
+    .filter((teamId) => !blockedTeamIds.has(teamId) && !blockedRefereeIds.has(teamId))
+    .sort((leftId, rightId) => {
+      const leftName = teamNameById.get(leftId) || `Team #${leftId}`;
+      const rightName = teamNameById.get(rightId) || `Team #${rightId}`;
+      return leftName.localeCompare(rightName, "de");
+    });
+
+  const options = availableIds.map((teamId) => ({
+    id: teamId,
+    name: teamNameById.get(teamId) || `Team #${teamId}`,
+    unavailable: false,
+  }));
+
+  const currentRefereeId = Number(match.referee_id);
+  if (
+    Number.isInteger(currentRefereeId) &&
+    currentRefereeId > 0 &&
+    !availableIds.includes(currentRefereeId)
+  ) {
+    options.unshift({
+      id: currentRefereeId,
+      name: teamNameById.get(currentRefereeId) || `Team #${currentRefereeId}`,
+      unavailable: true,
+    });
+  }
+
+  return options;
+}
+
+/**
+ * Renders the tabular all-matches page in tournament planning.
+ * @returns {void}
+ */
+function renderAllTournamentMatchesTable() {
+  if (!tournamentMatchesUi?.tableArea) {
+    return;
+  }
+
+  const plannedPhaseIds = getPlannedPhaseIdsInOrder();
+  syncStartedMatchPhaseState(plannedPhaseIds);
+
+  const nextPhaseId = getNextNotStartedPhaseId(plannedPhaseIds);
+  const hasMatches = plannedPhaseIds.length > 0;
+  const controlMode = Number.isInteger(activeStartedMatchPhaseId)
+    ? "reset"
+    : nextPhaseId
+      ? "start"
+      : "done";
+  const controlPhaseId = Number.isInteger(activeStartedMatchPhaseId) ? activeStartedMatchPhaseId : nextPhaseId;
+  renderTournamentMatchesPhaseControl(
+    tournamentMatchesUi.phaseToggleButton,
+    tournamentMatchesUi.phaseToggleHint,
+    {
+      mode: controlMode,
+      phaseName: controlPhaseId ? getPhaseDisplayName(controlPhaseId) : "",
+      hasMatches,
+    }
+  );
+
+  const teamNameById = new Map(
+    teamsWithIds
+      .map((team) => [Number(team.id), team.name])
+      .filter(([teamId]) => Number.isInteger(teamId) && teamId > 0)
+  );
+
+  const phaseNameById = new Map(
+    persistedPhases
+      .map((phase) => [Number(phase.id), String(phase.name || "")])
+      .filter(([phaseId]) => Number.isInteger(phaseId) && phaseId > 0)
+  );
+
+  const sortedMatches = [...persistedMatches].sort((left, right) => {
+    const timeCmp = toMinutes(String(left.start_time || "00:00")) - toMinutes(String(right.start_time || "00:00"));
+    if (timeCmp !== 0) {
+      return timeCmp;
+    }
+    const fieldCmp = Number(left.field_number || 0) - Number(right.field_number || 0);
+    if (fieldCmp !== 0) {
+      return fieldCmp;
+    }
+    return Number(left.id || 0) - Number(right.id || 0);
+  });
+
+  const rows = sortedMatches.map((match, index) => {
+    const isPause = String(match.entry_type || "match") === "pause";
+    const team1Label = getTeamNameLabel(match.team1_id, teamNameById);
+    const team2Label = getTeamNameLabel(match.team2_id, teamNameById);
+    const teamsLabel = isPause
+      ? `Pause (${Math.max(1, Number(match.duration_minutes) || 0)} min)`
+      : `${team1Label} - ${team2Label}`;
+
+    const refereeId = Number(match.referee_id);
+    const refereeLabel = Number.isInteger(refereeId) && refereeId > 0
+      ? teamNameById.get(refereeId) || `Team #${refereeId}`
+      : "-- Kein Schiedsrichter --";
+
+    return {
+      matchId: Number(match.id),
+      phaseId: Number(match.phase_id),
+      startTime: String(match.start_time || "--:--"),
+      fieldNumber: Number(match.field_number || 0),
+      number: index + 1,
+      roundLabel: String(match.block_name || phaseNameById.get(Number(match.phase_id)) || "Match"),
+      teamsLabel,
+      refereeId,
+      refereeLabel,
+      refereeOptions: getRefereeOptionsForMatch(match, teamNameById),
+      isFinished: Number(match.is_finished) > 0,
+      canEditReferee: !isPause && isRefereeAssignableMatch(match),
+      showActions: !isPause,
+      actionsEnabled: startedMatchPhaseIds.has(Number(match.phase_id)),
+    };
+  });
+
+  renderTournamentMatchesTable(tournamentMatchesUi.tableArea, rows);
 }
 
 /**
@@ -588,6 +903,8 @@ async function initializeTournamentPlanning() {
   } catch {
     persistedMatches = [];
   }
+
+  await restoreStartedMatchPhaseState();
 
   renderAllMatchGrid();
 }
@@ -1551,6 +1868,12 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
   }
 
   const source = persistedMatches[index];
+  const sourcePhaseId = Number(source.phase_id);
+  if (isPhaseScheduleLocked(sourcePhaseId)) {
+    window.alert(`Spielplan der gestarteten Phase ${getPhaseDisplayName(sourcePhaseId)} kann nicht mehr geaendert werden.`);
+    return;
+  }
+
   if (Number(source.field_number) === targetField && String(source.start_time) === targetTime) {
     return;
   }
@@ -1564,6 +1887,14 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
   const sourceField = Number(source.field_number);
   const sourceTime = String(source.start_time || "");
   const targetMatch = findMatchAtSlot(proposedMatches, targetField, targetTime, matchId);
+
+  if (targetMatch) {
+    const targetPhaseId = Number(targetMatch.phase_id);
+    if (isPhaseScheduleLocked(targetPhaseId)) {
+      window.alert(`Spielplan der gestarteten Phase ${getPhaseDisplayName(targetPhaseId)} kann nicht mehr geaendert werden.`);
+      return;
+    }
+  }
 
   if (targetMatch) {
     // Always swap source and target match positions directly.
@@ -2399,6 +2730,11 @@ tournamentPlanningUi.gridArea.addEventListener("click", async (event) => {
   }
 
   const phaseName = deleteBtn.dataset.phaseName || "diese Phase";
+  if (isPhaseScheduleLocked(phaseId)) {
+    window.alert(`Phase ${getPhaseDisplayName(phaseId)} ist gestartet und kann im Spielplan nicht mehr geaendert werden.`);
+    return;
+  }
+
   const confirmed = window.confirm(`Alle geplanten Matches für "${phaseName}" wirklich löschen?`);
   if (!confirmed) {
     return;
@@ -2412,6 +2748,74 @@ tournamentPlanningUi.gridArea.addEventListener("click", async (event) => {
     await recoverMatchesAfterPersistenceFailure(
       "Phase konnte nicht geloescht werden. Spielplan wurde aus der Datenbank neu geladen."
     );
+  }
+});
+
+tournamentMatchesUi.tableArea.addEventListener("change", async (event) => {
+  const select = event.target.closest(".tm-ref-select");
+  if (!select) {
+    return;
+  }
+
+  const matchId = Number(select.dataset.matchId);
+  const phaseId = Number(select.dataset.phaseId);
+  if (!Number.isInteger(matchId) || matchId <= 0 || !Number.isInteger(phaseId) || phaseId <= 0) {
+    return;
+  }
+
+  const targetMatch = persistedMatches.find((match) => Number(match.id) === matchId);
+  if (!targetMatch) {
+    return;
+  }
+
+  const nextRefereeId = Number(select.value);
+  targetMatch.referee_id = Number.isInteger(nextRefereeId) && nextRefereeId > 0 ? nextRefereeId : null;
+
+  try {
+    await persistPhaseMatches(phaseId);
+  } catch {
+    await recoverMatchesAfterPersistenceFailure(
+      "Schiedsrichter konnte nicht gespeichert werden. Spielplan wurde aus der Datenbank neu geladen."
+    );
+    return;
+  }
+
+  renderAllMatchGrid();
+});
+
+tournamentMatchesUi.tableArea.addEventListener("click", (event) => {
+  const entryButton = event.target.closest("[data-action='match-entry']");
+  if (entryButton) {
+    window.alert("Aktion 'Eintragen' folgt im naechsten Schritt.");
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-action='match-delete']");
+  if (deleteButton) {
+    window.alert("Aktion 'Loeschen' folgt im naechsten Schritt.");
+  }
+});
+
+tournamentMatchesUi.phaseToggleButton.addEventListener("click", () => {
+  const mode = String(tournamentMatchesUi.phaseToggleButton.dataset.mode || "");
+  if (mode === "start") {
+    const plannedPhaseIds = getPlannedPhaseIdsInOrder();
+    const nextPhaseId = getNextNotStartedPhaseId(plannedPhaseIds);
+    if (!Number.isInteger(nextPhaseId) || nextPhaseId <= 0) {
+      renderAllTournamentMatchesTable();
+      return;
+    }
+
+    startedMatchPhaseIds.add(nextPhaseId);
+    activeStartedMatchPhaseId = nextPhaseId;
+    void persistStartedMatchPhaseState();
+    renderAllTournamentMatchesTable();
+    return;
+  }
+
+  if (mode === "reset") {
+    const phaseName = getPhaseDisplayName(activeStartedMatchPhaseId);
+    window.alert(`Phase ${phaseName} zuruecksetzen folgt im naechsten Schritt.`);
   }
 });
 

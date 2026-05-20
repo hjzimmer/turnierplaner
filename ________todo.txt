@@ -4,11 +4,14 @@ ok -> bei DnD sicherstellen, das kein team im gleichen zeitslot mehrfach spielt
 ok -> refs definieren und spielen zuweisen
 ok -> DnD zwischen den Feldern nicht sauber, kommt oft "gleichzeitig auf zwei Feldern"
 OK -> refs bei DnD neu zuordnen
+OK -> liste aller spiele erzeugen
+OK -> turnierphase starten und planung sperren
+
 
 verschiedene Tabellenberechnung definieren
-turnier starten und liste aller spiele erzeugen, 
 dort ergebnisse eintragen lassen, löschen, editieren, sätze in DB anlegen und löschen
     ergebnisse aktualisieren lassen bei eintrag der spiele, ebenso platzierungsübersicht
-
+phase zurücksetzen umsetzen
+pause einplanen bei gestarter Phase
 bei lsöchen und bearbeiten abhängigkeiten nach vorn und hinten beachten
 nach Phasenende neue phase starten
