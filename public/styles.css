@@ -1264,6 +1264,22 @@ body {
   cursor: not-allowed;
 }
 
+.tm-helper-fill-btn {
+  border: 1px solid #b8c8dc;
+  border-radius: 10px;
+  min-height: 38px;
+  padding: 0.45rem 0.9rem;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tm-helper-fill-btn:hover {
+  background: #eef4fb;
+}
+
 .tm-phase-toggle-hint {
   color: var(--muted);
   font-size: 0.86rem;
@@ -1367,6 +1383,14 @@ body {
   color: #047481;
 }
 
+.tm-set-results {
+  margin-top: 0.22rem;
+  font-size: 0.92rem;
+  color: #475467;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .tm-actions {
   display: flex;
   gap: 0.45rem;
@@ -1405,6 +1429,149 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
   filter: none;
+}
+
+/* ===== Match Result Dialog ===== */
+.tmr-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 20, 31, 0.45);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 40;
+}
+
+.tmr-dialog {
+  width: min(500px, 96vw);
+  border: 1px solid #c9d3de;
+  border-radius: 10px;
+  background: #f3f4f6;
+  box-shadow: 0 20px 42px rgba(12, 20, 31, 0.33);
+  overflow: hidden;
+}
+
+.tmr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #d5d9df;
+  background: #f3f4f6;
+}
+
+.tmr-title {
+  margin: 0;
+  font-size: 1.04rem;
+  font-weight: 700;
+  color: #2b313a;
+}
+
+.tmr-close-btn {
+  border: 0;
+  background: transparent;
+  color: #6a737f;
+  font-size: 1.55rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tmr-content {
+  padding: 0.9rem 1rem 0.9rem;
+}
+
+.tmr-teams {
+  margin: 0 0 0.9rem;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #343b45;
+}
+
+.tmr-sets {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.tmr-set-row {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.tmr-set-label {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: #2f3640;
+}
+
+.tmr-score-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.tmr-score-input {
+  border: 1px solid #ced4dd;
+  border-radius: 8px;
+  min-height: 38px;
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+  font-size: 1.02rem;
+  color: #222a33;
+  background: #ffffff;
+}
+
+.tmr-score-input:focus {
+  outline: 2px solid #8cb8ff;
+  outline-offset: 0;
+}
+
+.tmr-score-sep {
+  font-weight: 700;
+  color: #353d47;
+}
+
+.tmr-info-box {
+  margin-top: 1rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid #9ad8ee;
+  border-radius: 6px;
+  background: #bfe8f5;
+  color: #0b4a5e;
+  font-size: 0.88rem;
+}
+
+.tmr-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-top: 1px solid #d5d9df;
+  background: #f3f4f6;
+}
+
+.tmr-btn {
+  border: 0;
+  border-radius: 7px;
+  min-height: 36px;
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  font-size: 1.05rem;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.tmr-btn-cancel {
+  background: #656d78;
+}
+
+.tmr-btn-save {
+  background: #1f69e0;
+}
+
+.tmr-btn:hover {
+  filter: brightness(0.95);
 }
 
 /* ===== Match Board ===== */

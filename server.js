@@ -339,6 +339,19 @@ async function initializeDatabase() {
   `);
 
   await run(`
+    CREATE TABLE IF NOT EXISTS match_sets (
+      id INTEGER PRIMARY KEY,
+      match_id INTEGER NOT NULL,
+      set_index INTEGER NOT NULL,
+      team1_score INTEGER,
+      team2_score INTEGER,
+      is_finished INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (match_id, set_index),
+      FOREIGN KEY (match_id) REFERENCES matches(id)
+    )
+  `);
+
+  await run(`
     CREATE TABLE IF NOT EXISTS started_match_phases (
       phase_id INTEGER PRIMARY KEY,
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -633,6 +646,104 @@ function normalizeBoolean(value, fallback = false) {
     return false;
   }
   return fallback;
+}
+
+/**
+ * Reads configured set count from current setup settings.
+ * @returns {Promise<number>} Configured set count per match.
+ */
+async function loadConfiguredSetCount() {
+  const setupRow = await get("SELECT sets_per_match FROM setup WHERE id = 1");
+  return Math.max(1, normalizeInteger(setupRow?.sets_per_match, 1));
+}
+
+/**
+ * Calculates match completion and winner/loser ids from set rows.
+ * @param {Array<object>} sets Set rows with team1_score, team2_score, is_finished.
+ * @param {number|null} team1Id Team 1 id from match row.
+ * @param {number|null} team2Id Team 2 id from match row.
+ * @param {number} configuredSetCount Configured number of sets for one match.
+ * @returns {{ isFinished: number, winnerId: number|null, loserId: number|null }} Match outcome.
+ */
+function calculateMatchOutcomeFromSets(sets, team1Id, team2Id, configuredSetCount) {
+  let team1Wins = 0;
+  let team2Wins = 0;
+  let team1Points = 0;
+  let team2Points = 0;
+  let finishedSetCount = 0;
+
+  const requiredSetWins = Math.floor(Math.max(1, configuredSetCount) / 2) + 1;
+
+  sets.forEach((entry) => {
+    if (!normalizeBoolean(entry?.is_finished, false)) {
+      return;
+    }
+
+    const team1Score = Number(entry?.team1_score);
+    const team2Score = Number(entry?.team2_score);
+    if (!Number.isFinite(team1Score) || !Number.isFinite(team2Score)) {
+      return;
+    }
+    finishedSetCount += 1;
+    team1Points += team1Score;
+    team2Points += team2Score;
+    if (team1Score === team2Score) {
+      return;
+    }
+
+    if (team1Score > team2Score) {
+      team1Wins += 1;
+    } else {
+      team2Wins += 1;
+    }
+  });
+
+  const hasAllConfiguredSets = finishedSetCount >= Math.max(1, configuredSetCount);
+  const isFinished = hasAllConfiguredSets ? 1 : 0;
+
+  if (isFinished === 0) {
+    return {
+      isFinished: 0,
+      winnerId: null,
+      loserId: null,
+    };
+  }
+
+  if (team1Wins > team2Wins && Number.isInteger(team1Id) && team1Id > 0) {
+    return {
+      isFinished: 1,
+      winnerId: team1Id,
+      loserId: Number.isInteger(team2Id) && team2Id > 0 ? team2Id : null,
+    };
+  }
+  if (team2Wins > team1Wins && Number.isInteger(team2Id) && team2Id > 0) {
+    return {
+      isFinished: 1,
+      winnerId: team2Id,
+      loserId: Number.isInteger(team1Id) && team1Id > 0 ? team1Id : null,
+    };
+  }
+
+  if (team1Points > team2Points && Number.isInteger(team1Id) && team1Id > 0) {
+    return {
+      isFinished: 1,
+      winnerId: team1Id,
+      loserId: Number.isInteger(team2Id) && team2Id > 0 ? team2Id : null,
+    };
+  }
+  if (team2Points > team1Points && Number.isInteger(team2Id) && team2Id > 0) {
+    return {
+      isFinished: 1,
+      winnerId: team2Id,
+      loserId: Number.isInteger(team1Id) && team1Id > 0 ? team1Id : null,
+    };
+  }
+
+  return {
+    isFinished: 1,
+    winnerId: null,
+    loserId: null,
+  };
 }
 
 /**
@@ -1387,10 +1498,186 @@ app.get("/api/teams/with-ids", async (req, res) => {
  */
 app.get("/api/matches", async (req, res) => {
   try {
-    const rows = await all("SELECT * FROM matches ORDER BY position ASC, id ASC");
+    const rows = await all(`
+      SELECT
+        m.*,
+        (
+          SELECT group_concat(set_pair, ' | ')
+          FROM (
+            SELECT
+              CASE
+                WHEN ms.team1_score IS NOT NULL AND ms.team2_score IS NOT NULL
+                THEN CAST(ms.team1_score AS TEXT) || ':' || CAST(ms.team2_score AS TEXT)
+                ELSE NULL
+              END AS set_pair
+            FROM match_sets ms
+            WHERE ms.match_id = m.id
+            ORDER BY ms.set_index ASC
+          ) ordered_sets
+        ) AS set_results_text
+      FROM matches m
+      ORDER BY m.position ASC, m.id ASC
+    `);
     res.json({ matches: rows });
   } catch (error) {
     res.status(500).json({ error: "Failed to load matches." });
+  }
+});
+
+/**
+ * Returns all persisted set rows for one match.
+ * @param {number} req.params.matchId Target match id.
+ * @returns {Promise<void>} Sends ordered set rows.
+ */
+app.get("/api/matches/:matchId/sets", async (req, res) => {
+  const matchId = Number(req.params.matchId);
+  if (!Number.isInteger(matchId) || matchId <= 0) {
+    res.status(400).json({ error: "Invalid match id." });
+    return;
+  }
+
+  try {
+    const matchRow = await get("SELECT id FROM matches WHERE id = ?", [matchId]);
+    if (!matchRow) {
+      res.status(404).json({ error: "Match not found." });
+      return;
+    }
+
+    const rows = await all(
+      "SELECT * FROM match_sets WHERE match_id = ? ORDER BY set_index ASC, id ASC",
+      [matchId]
+    );
+    res.json({ sets: rows });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load match sets." });
+  }
+});
+
+/**
+ * Replaces set rows for one match and updates match winner/finished flags.
+ * @param {number} req.params.matchId Target match id.
+ * @param {Array<object>} req.body.sets Set rows with set_index, team1_score, team2_score, is_finished.
+ * @returns {Promise<void>} Sends persisted set rows.
+ */
+app.put("/api/matches/:matchId/sets", async (req, res) => {
+  const matchId = Number(req.params.matchId);
+  if (!Number.isInteger(matchId) || matchId <= 0) {
+    res.status(400).json({ error: "Invalid match id." });
+    return;
+  }
+
+  const rawSets = Array.isArray(req.body?.sets) ? req.body.sets : [];
+
+  try {
+    const matchRow = await get(
+      "SELECT id, team1_id, team2_id, entry_type FROM matches WHERE id = ?",
+      [matchId]
+    );
+    if (!matchRow) {
+      res.status(404).json({ error: "Match not found." });
+      return;
+    }
+    if (normalizeString(matchRow.entry_type) === "pause") {
+      res.status(400).json({ error: "Pause entries do not support set results." });
+      return;
+    }
+
+    await run("BEGIN TRANSACTION");
+
+    await run("DELETE FROM match_sets WHERE match_id = ?", [matchId]);
+
+    for (let index = 0; index < rawSets.length; index += 1) {
+      const rawSet = rawSets[index] || {};
+      const setIndex = Math.max(1, normalizeInteger(rawSet.set_index, index + 1));
+
+      const hasTeam1Score =
+        rawSet.team1_score !== null &&
+        rawSet.team1_score !== undefined &&
+        String(rawSet.team1_score).trim() !== "";
+      const hasTeam2Score =
+        rawSet.team2_score !== null &&
+        rawSet.team2_score !== undefined &&
+        String(rawSet.team2_score).trim() !== "";
+      const team1Score = hasTeam1Score ? normalizeInteger(rawSet.team1_score, 0) : null;
+      const team2Score = hasTeam2Score ? normalizeInteger(rawSet.team2_score, 0) : null;
+      const isFinished =
+        normalizeBoolean(rawSet.is_finished, false) &&
+        Number.isInteger(team1Score) &&
+        Number.isInteger(team2Score)
+          ? 1
+          : 0;
+
+      await run(
+        `INSERT INTO match_sets (
+          match_id, set_index, team1_score, team2_score, is_finished
+        ) VALUES (?, ?, ?, ?, ?)`,
+        [matchId, setIndex, team1Score, team2Score, isFinished]
+      );
+    }
+
+    const persistedSets = await all(
+      "SELECT * FROM match_sets WHERE match_id = ? ORDER BY set_index ASC, id ASC",
+      [matchId]
+    );
+    const configuredSetCount = await loadConfiguredSetCount();
+    const outcome = calculateMatchOutcomeFromSets(
+      persistedSets,
+      Number(matchRow.team1_id),
+      Number(matchRow.team2_id),
+      configuredSetCount
+    );
+
+    await run(
+      "UPDATE matches SET is_finished = ?, winner_id = ?, loser_id = ? WHERE id = ?",
+      [outcome.isFinished, outcome.winnerId, outcome.loserId, matchId]
+    );
+
+    await run("COMMIT");
+    res.json({
+      sets: persistedSets,
+      outcome,
+    });
+  } catch (error) {
+    try {
+      await run("ROLLBACK");
+    } catch (_) {
+      // Ignore rollback errors.
+    }
+    res.status(500).json({ error: "Failed to save match sets." });
+  }
+});
+
+/**
+ * Deletes all set rows for one match and resets winner/finished flags.
+ * @param {number} req.params.matchId Target match id.
+ * @returns {Promise<void>} Sends ok confirmation.
+ */
+app.delete("/api/matches/:matchId/sets", async (req, res) => {
+  const matchId = Number(req.params.matchId);
+  if (!Number.isInteger(matchId) || matchId <= 0) {
+    res.status(400).json({ error: "Invalid match id." });
+    return;
+  }
+
+  try {
+    const matchRow = await get("SELECT id FROM matches WHERE id = ?", [matchId]);
+    if (!matchRow) {
+      res.status(404).json({ error: "Match not found." });
+      return;
+    }
+
+    await run("BEGIN TRANSACTION");
+    await run("DELETE FROM match_sets WHERE match_id = ?", [matchId]);
+    await run("UPDATE matches SET is_finished = 0, winner_id = NULL, loser_id = NULL WHERE id = ?", [matchId]);
+    await run("COMMIT");
+    res.json({ ok: true });
+  } catch (error) {
+    try {
+      await run("ROLLBACK");
+    } catch (_) {
+      // Ignore rollback errors.
+    }
+    res.status(500).json({ error: "Failed to delete match sets." });
   }
 });
 
@@ -1590,6 +1877,13 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
       }
     }
 
+    const keptIdSet = new Set(keptIds.map((id) => Number(id)));
+    const removedMatchIds = [...existingIds].filter((existingId) => !keptIdSet.has(Number(existingId)));
+    if (removedMatchIds.length > 0) {
+      const placeholders = removedMatchIds.map(() => "?").join(",");
+      await run(`DELETE FROM match_sets WHERE match_id IN (${placeholders})`, removedMatchIds);
+    }
+
     if (keptIds.length > 0) {
       const placeholders = keptIds.map(() => "?").join(",");
       await run(`DELETE FROM matches WHERE phase_id = ? AND id NOT IN (${placeholders})`, [
@@ -1597,6 +1891,9 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
         ...keptIds,
       ]);
     } else {
+      await run("DELETE FROM match_sets WHERE match_id IN (SELECT id FROM matches WHERE phase_id = ?)", [
+        phaseId,
+      ]);
       await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
     }
 
@@ -1629,6 +1926,9 @@ app.delete("/api/matches/phase/:phaseId", async (req, res) => {
   }
 
   try {
+    await run("DELETE FROM match_sets WHERE match_id IN (SELECT id FROM matches WHERE phase_id = ?)", [
+      phaseId,
+    ]);
     await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
     res.json({ ok: true });
   } catch (error) {

@@ -600,7 +600,7 @@ function resolveTeamLabel(teamId, teamRef, teamNameById) {
 /**
  * Mounts the tabular tournament matches layout into the given container.
  * @param {HTMLElement} mount Container element to mount into.
- * @returns {{ tableArea: HTMLElement, phaseToggleButton: HTMLButtonElement, phaseToggleHint: HTMLElement }} References to key UI nodes.
+ * @returns {{ tableArea: HTMLElement, phaseToggleButton: HTMLButtonElement, phaseToggleHint: HTMLElement, helperFillButton: HTMLButtonElement }} References to key UI nodes.
  */
 export function mountTournamentMatchesLayout(mount) {
   mount.innerHTML = "";
@@ -621,7 +621,13 @@ export function mountTournamentMatchesLayout(mount) {
   phaseToggleHint.className = "tm-phase-toggle-hint";
   phaseToggleHint.textContent = "";
 
+  const helperFillButton = document.createElement("button");
+  helperFillButton.type = "button";
+  helperFillButton.className = "tm-helper-fill-btn";
+  helperFillButton.textContent = "Temp: Zufalls-Ergebnisse fuellen";
+
   controls.appendChild(phaseToggleButton);
+  controls.appendChild(helperFillButton);
   controls.appendChild(phaseToggleHint);
 
   const tableArea = document.createElement("div");
@@ -636,7 +642,7 @@ export function mountTournamentMatchesLayout(mount) {
   card.appendChild(tableArea);
   mount.appendChild(card);
 
-  return { tableArea, phaseToggleButton, phaseToggleHint };
+  return { tableArea, phaseToggleButton, phaseToggleHint, helperFillButton };
 }
 
 /**
@@ -727,6 +733,10 @@ export function renderTournamentMatchesTable(tableArea, rows) {
       `
       : "";
 
+    const setResultsHtml = row.setResultsText
+      ? `<div class="tm-set-results">${row.setResultsText}</div>`
+      : "";
+
     tr.innerHTML = `
       <td class="tm-time">${row.startTime}</td>
       <td><span class="tm-chip tm-chip-field">${fieldLabel}</span></td>
@@ -734,7 +744,10 @@ export function renderTournamentMatchesTable(tableArea, rows) {
       <td><span class="tm-chip tm-chip-round">${row.roundLabel}</span></td>
       <td class="tm-teams">${row.teamsLabel}</td>
       <td class="tm-ref-cell"></td>
-      <td><span class="tm-status ${statusClass}">${statusText}</span></td>
+      <td>
+        <span class="tm-status ${statusClass}">${statusText}</span>
+        ${setResultsHtml}
+      </td>
       <td class="tm-actions">
         ${actionsHtml}
       </td>

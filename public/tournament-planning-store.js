@@ -97,3 +97,50 @@ export async function saveStartedMatchPhasesState(startedPhaseIds, activePhaseId
     throw new Error("Gestartete Phasen konnten nicht gespeichert werden.");
   }
 }
+
+/**
+ * Loads all persisted set rows for one match.
+ * @param {number} matchId Target match id.
+ * @returns {Promise<Array<object>>} Set rows ordered by set index.
+ */
+export async function loadMatchSets(matchId) {
+  const response = await fetch(`/api/matches/${encodeURIComponent(matchId)}/sets`);
+  if (!response.ok) {
+    throw new Error("Satzdaten konnten nicht geladen werden.");
+  }
+  const payload = await response.json();
+  return Array.isArray(payload.sets) ? payload.sets : [];
+}
+
+/**
+ * Replaces set rows for one match.
+ * @param {number} matchId Target match id.
+ * @param {Array<object>} sets Set rows to persist.
+ * @returns {Promise<Array<object>>} Persisted set rows.
+ */
+export async function saveMatchSets(matchId, sets) {
+  const response = await fetch(`/api/matches/${encodeURIComponent(matchId)}/sets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sets }),
+  });
+  if (!response.ok) {
+    throw new Error("Satzdaten konnten nicht gespeichert werden.");
+  }
+  const payload = await response.json();
+  return Array.isArray(payload.sets) ? payload.sets : [];
+}
+
+/**
+ * Deletes all set rows for one match.
+ * @param {number} matchId Target match id.
+ * @returns {Promise<void>} Resolves when delete is complete.
+ */
+export async function deleteMatchSets(matchId) {
+  const response = await fetch(`/api/matches/${encodeURIComponent(matchId)}/sets`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error("Satzdaten konnten nicht geloescht werden.");
+  }
+}

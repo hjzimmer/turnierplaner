@@ -430,7 +430,7 @@ export function createPlacementsOverview(placements, allTeams, allPhases, blocks
     <th>Quelle</th>
     <th>Team/Phase</th>
     <th>Gruppe/Match</th>
-    <th>Position</th>
+    <th>Position in Gruppe</th>
   `;
   thead.appendChild(headerRow);
   table.appendChild(thead);

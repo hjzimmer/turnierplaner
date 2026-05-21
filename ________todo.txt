@@ -6,12 +6,14 @@ ok -> DnD zwischen den Feldern nicht sauber, kommt oft "gleichzeitig auf zwei Fe
 OK -> refs bei DnD neu zuordnen
 OK -> liste aller spiele erzeugen
 OK -> turnierphase starten und planung sperren
-
+OK -> phase zurücksetzen umsetzen (löschen der ergebnisse)
+OK -> dort ergebnisse eintragen lassen, löschen, editieren, sätze in DB anlegen und löschen
 
 verschiedene Tabellenberechnung definieren
-dort ergebnisse eintragen lassen, löschen, editieren, sätze in DB anlegen und löschen
+ergebnisse jederzeit bei standeingabe aktualisieren
     ergebnisse aktualisieren lassen bei eintrag der spiele, ebenso platzierungsübersicht
-phase zurücksetzen umsetzen
-pause einplanen bei gestarter Phase
-bei lsöchen und bearbeiten abhängigkeiten nach vorn und hinten beachten
+bei lsöchen und bearbeiten abhängigkeiten nach vorn und hinten updaten, sofern alle Ergebnisse vorliegen
 nach Phasenende neue phase starten
+
+pause einplanen bei gestarter Phase
+

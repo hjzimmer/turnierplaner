@@ -60,6 +60,9 @@ import {
   deleteMatchesForPhase,
   loadStartedMatchPhasesState,
   saveStartedMatchPhasesState,
+  loadMatchSets,
+  saveMatchSets,
+  deleteMatchSets,
 } from "./tournament-planning-store.js";
 import { buildScheduledMatches } from "./tournament-planning-calculations.js";
 import { renderMatchGrid } from "./tournament-planning-layout.js";
@@ -100,6 +103,7 @@ let startedMatchPhaseIds = new Set();
 let activeStartedMatchPhaseId = null;
 let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
+let activeMatchResultDialog = null;
 
 /**
  * Returns current started-phase state payload for persistence.
@@ -874,6 +878,7 @@ function renderAllTournamentMatchesTable() {
       refereeLabel,
       refereeOptions: getRefereeOptionsForMatch(match, teamNameById),
       isFinished: Number(match.is_finished) > 0,
+      setResultsText: String(match.set_results_text || "").trim(),
       canEditReferee: !isPause && isRefereeAssignableMatch(match),
       showActions: !isPause,
       actionsEnabled: startedMatchPhaseIds.has(Number(match.phase_id)),
@@ -881,6 +886,272 @@ function renderAllTournamentMatchesTable() {
   });
 
   renderTournamentMatchesTable(tournamentMatchesUi.tableArea, rows);
+}
+
+/**
+ * Closes and removes the active match result dialog if present.
+ * @returns {void}
+ */
+function closeActiveMatchResultDialog() {
+  if (!activeMatchResultDialog) {
+    return;
+  }
+
+  activeMatchResultDialog.remove();
+  activeMatchResultDialog = null;
+}
+
+/**
+ * Converts persisted set rows into a fixed-length editable draft.
+ * @param {Array<object>} persistedSets Persisted set rows.
+ * @param {number} setCount Number of configured sets per match.
+ * @returns {Array<{setIndex: number, team1Score: string, team2Score: string}>} Editable set draft.
+ */
+function buildSetDraftsForDialog(persistedSets, setCount) {
+  const bySetIndex = new Map();
+  (persistedSets || []).forEach((entry) => {
+    const setIndex = Number(entry.set_index);
+    if (!Number.isInteger(setIndex) || setIndex <= 0) {
+      return;
+    }
+    bySetIndex.set(setIndex, entry);
+  });
+
+  const drafts = [];
+  for (let setIndex = 1; setIndex <= setCount; setIndex += 1) {
+    const existing = bySetIndex.get(setIndex);
+    drafts.push({
+      setIndex,
+      team1Score: Number.isInteger(Number(existing?.team1_score)) ? String(existing.team1_score) : "",
+      team2Score: Number.isInteger(Number(existing?.team2_score)) ? String(existing.team2_score) : "",
+    });
+  }
+  return drafts;
+}
+
+/**
+ * Parses one score input value to number-or-null for persistence.
+ * @param {string} value Raw input value.
+ * @returns {number|null} Parsed non-negative integer or null.
+ */
+function parseSetScoreValue(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.round(parsed));
+}
+
+/**
+ * Reloads matches from backend and re-renders planning views.
+ * @returns {Promise<void>} Resolves when reload and render are complete.
+ */
+async function reloadMatchesAndRender() {
+  persistedMatches = await loadMatches();
+  renderAllMatchGrid();
+}
+
+/**
+ * Builds random set payload for one match according to configured set count.
+ * @param {number} setCount Configured set count per match.
+ * @returns {Array<{set_index: number, team1_score: number, team2_score: number, is_finished: boolean}>} Random set payload.
+ */
+function buildRandomSetPayload(setCount) {
+  const totalSets = Math.max(1, Number(setCount) || 1);
+  const payload = [];
+  for (let setIndex = 1; setIndex <= totalSets; setIndex += 1) {
+    payload.push({
+      set_index: setIndex,
+      team1_score: 1 + Math.floor(Math.random() * 10),
+      team2_score: 1 + Math.floor(Math.random() * 10),
+      is_finished: true,
+    });
+  }
+  return payload;
+}
+
+/**
+ * Fills random set results for all eligible matches in the currently running phase.
+ * Matches without fixed teams are ignored.
+ * @returns {Promise<{updatedMatches: number}>} Number of matches that were updated.
+ */
+async function fillRandomResultsForActivePhase() {
+  const activePhaseId = Number(activeStartedMatchPhaseId);
+  if (!Number.isInteger(activePhaseId) || activePhaseId <= 0) {
+    return { updatedMatches: 0 };
+  }
+
+  const setCount = Math.max(1, Number(persistedSettings.sets_per_match) || 1);
+  const phaseMatchesOrdered = persistedMatches
+    .filter(
+      (match) =>
+        Number(match.phase_id) === activePhaseId &&
+        String(match.entry_type || "match") !== "pause"
+    )
+    .sort((left, right) => {
+      const timeCmp = toMinutes(String(left.start_time || "00:00")) - toMinutes(String(right.start_time || "00:00"));
+      if (timeCmp !== 0) {
+        return timeCmp;
+      }
+      const fieldCmp = Number(left.field_number || 0) - Number(right.field_number || 0);
+      if (fieldCmp !== 0) {
+        return fieldCmp;
+      }
+      return Number(left.id || 0) - Number(right.id || 0);
+    });
+
+  const protectedLastTwoIds = new Set(
+    phaseMatchesOrdered
+      .slice(-2)
+      .map((match) => Number(match.id))
+      .filter((matchId) => Number.isInteger(matchId) && matchId > 0)
+  );
+
+  const phaseMatches = phaseMatchesOrdered.filter(
+    (match) =>
+      !protectedLastTwoIds.has(Number(match.id)) &&
+      isRefereeAssignableMatch(match)
+  );
+
+  let updatedMatches = 0;
+  for (const match of phaseMatches) {
+    const matchId = Number(match.id);
+    if (!Number.isInteger(matchId) || matchId <= 0) {
+      continue;
+    }
+
+    const setsPayload = buildRandomSetPayload(setCount);
+    await saveMatchSets(matchId, setsPayload);
+    updatedMatches += 1;
+  }
+
+  return { updatedMatches };
+}
+
+/**
+ * Opens the match result dialog for one match and persists entered set values.
+ * Existing set rows are loaded and can be modified.
+ * @param {number} matchId Target match id.
+ * @returns {Promise<void>} Resolves when open flow has completed.
+ */
+async function openMatchResultDialog(matchId) {
+  const match = persistedMatches.find((entry) => Number(entry.id) === Number(matchId));
+  if (!match) {
+    return;
+  }
+
+  const setCount = Math.max(1, Number(persistedSettings.sets_per_match) || 1);
+  const teamNameById = new Map(
+    teamsWithIds
+      .map((team) => [Number(team.id), team.name])
+      .filter(([teamId]) => Number.isInteger(teamId) && teamId > 0)
+  );
+  const team1Label = getTeamNameLabel(match.team1_id, teamNameById);
+  const team2Label = getTeamNameLabel(match.team2_id, teamNameById);
+
+  let persistedSets = [];
+  try {
+    persistedSets = await loadMatchSets(matchId);
+  } catch {
+    window.alert("Satzdaten konnten nicht geladen werden.");
+    return;
+  }
+
+  const setDrafts = buildSetDraftsForDialog(persistedSets, setCount);
+
+  closeActiveMatchResultDialog();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "tmr-backdrop";
+
+  const dialog = document.createElement("div");
+  dialog.className = "tmr-dialog";
+  dialog.innerHTML = `
+    <div class="tmr-header">
+      <h3 class="tmr-title">Match #${Number(match.id)} - ${String(match.block_name || "Match")}</h3>
+      <button type="button" class="tmr-close-btn" data-action="close-dialog" aria-label="Dialog schliessen">×</button>
+    </div>
+    <div class="tmr-content">
+      <p class="tmr-teams">${team1Label} - ${team2Label}</p>
+      <div class="tmr-sets"></div>
+      <div class="tmr-info-box">
+        Der Gewinner wird automatisch ermittelt. Bei Bedarf werden nachfolgende Finalrunden-Matches aktualisiert.
+      </div>
+    </div>
+    <div class="tmr-footer">
+      <button type="button" class="tmr-btn tmr-btn-cancel" data-action="close-dialog">Abbrechen</button>
+      <button type="button" class="tmr-btn tmr-btn-save" data-action="save-dialog">Speichern</button>
+    </div>
+  `;
+
+  const setsContainer = dialog.querySelector(".tmr-sets");
+  setDrafts.forEach((setEntry) => {
+    const row = document.createElement("div");
+    row.className = "tmr-set-row";
+    row.dataset.setIndex = String(setEntry.setIndex);
+    row.innerHTML = `
+      <label class="tmr-set-label">Satz ${setEntry.setIndex}</label>
+      <div class="tmr-score-row">
+        <input class="tmr-score-input" data-side="team1" type="number" min="0" step="1" value="${setEntry.team1Score}" />
+        <span class="tmr-score-sep">:</span>
+        <input class="tmr-score-input" data-side="team2" type="number" min="0" step="1" value="${setEntry.team2Score}" />
+      </div>
+    `;
+    setsContainer.appendChild(row);
+  });
+
+  backdrop.appendChild(dialog);
+  document.body.appendChild(backdrop);
+  activeMatchResultDialog = backdrop;
+
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) {
+      closeActiveMatchResultDialog();
+    }
+  });
+
+  dialog.addEventListener("click", async (event) => {
+    const closeButton = event.target.closest("[data-action='close-dialog']");
+    if (closeButton) {
+      closeActiveMatchResultDialog();
+      return;
+    }
+
+    const saveButton = event.target.closest("[data-action='save-dialog']");
+    if (!saveButton) {
+      return;
+    }
+
+    const setRows = [...dialog.querySelectorAll(".tmr-set-row")];
+    const setsPayload = setRows.map((row) => {
+      const setIndex = Number(row.dataset.setIndex);
+      const team1Value = row.querySelector(".tmr-score-input[data-side='team1']")?.value || "";
+      const team2Value = row.querySelector(".tmr-score-input[data-side='team2']")?.value || "";
+      const team1Score = parseSetScoreValue(team1Value);
+      const team2Score = parseSetScoreValue(team2Value);
+      const isFinished = Number.isInteger(team1Score) && Number.isInteger(team2Score);
+
+      return {
+        set_index: setIndex,
+        team1_score: team1Score,
+        team2_score: team2Score,
+        is_finished: isFinished,
+      };
+    });
+
+    try {
+      await saveMatchSets(matchId, setsPayload);
+      closeActiveMatchResultDialog();
+      await reloadMatchesAndRender();
+    } catch {
+      window.alert("Satzdaten konnten nicht gespeichert werden.");
+    }
+  });
 }
 
 /**
@@ -2783,20 +3054,68 @@ tournamentMatchesUi.tableArea.addEventListener("change", async (event) => {
   renderAllMatchGrid();
 });
 
-tournamentMatchesUi.tableArea.addEventListener("click", (event) => {
+tournamentMatchesUi.tableArea.addEventListener("click", async (event) => {
   const entryButton = event.target.closest("[data-action='match-entry']");
   if (entryButton) {
-    window.alert("Aktion 'Eintragen' folgt im naechsten Schritt.");
+    const matchId = Number(entryButton.dataset.matchId);
+    if (!Number.isInteger(matchId) || matchId <= 0) {
+      return;
+    }
+
+    await openMatchResultDialog(matchId);
     return;
   }
 
   const deleteButton = event.target.closest("[data-action='match-delete']");
   if (deleteButton) {
-    window.alert("Aktion 'Loeschen' folgt im naechsten Schritt.");
+    const matchId = Number(deleteButton.dataset.matchId);
+    if (!Number.isInteger(matchId) || matchId <= 0) {
+      return;
+    }
+
+    const confirmed = window.confirm("Alle Satzdaten fuer dieses Match wirklich loeschen?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteMatchSets(matchId);
+      await reloadMatchesAndRender();
+    } catch {
+      window.alert("Satzdaten konnten nicht geloescht werden.");
+    }
   }
 });
 
-tournamentMatchesUi.phaseToggleButton.addEventListener("click", () => {
+/**
+ * Resets all result data for one phase by deleting all persisted set rows of its matches.
+ * Also unlocks the phase in started-phase state.
+ * @param {number} phaseId Target phase id.
+ * @returns {Promise<void>} Resolves when reset flow has completed.
+ */
+async function resetStartedPhaseResults(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  const phaseMatches = persistedMatches.filter((match) => Number(match.phase_id) === numericPhaseId);
+
+  for (const match of phaseMatches) {
+    const matchId = Number(match.id);
+    if (!Number.isInteger(matchId) || matchId <= 0) {
+      continue;
+    }
+    await deleteMatchSets(matchId);
+  }
+
+  await reloadMatchesAndRender();
+
+  startedMatchPhaseIds.delete(numericPhaseId);
+  if (Number(activeStartedMatchPhaseId) === numericPhaseId) {
+    activeStartedMatchPhaseId = null;
+  }
+  await persistStartedMatchPhaseState();
+  renderAllTournamentMatchesTable();
+}
+
+tournamentMatchesUi.phaseToggleButton.addEventListener("click", async () => {
   const mode = String(tournamentMatchesUi.phaseToggleButton.dataset.mode || "");
   if (mode === "start") {
     const plannedPhaseIds = getPlannedPhaseIdsInOrder();
@@ -2814,8 +3133,53 @@ tournamentMatchesUi.phaseToggleButton.addEventListener("click", () => {
   }
 
   if (mode === "reset") {
+    const phaseId = Number(activeStartedMatchPhaseId);
+    if (!Number.isInteger(phaseId) || phaseId <= 0) {
+      return;
+    }
+
     const phaseName = getPhaseDisplayName(activeStartedMatchPhaseId);
-    window.alert(`Phase ${phaseName} zuruecksetzen folgt im naechsten Schritt.`);
+    const confirmed = window.confirm(
+      `Alle Match-Ergebnisse von Phase ${phaseName} wirklich loeschen und Spiele zuruecksetzen?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await resetStartedPhaseResults(phaseId);
+    } catch {
+      window.alert("Phase konnte nicht zurueckgesetzt werden.");
+      try {
+        await reloadMatchesAndRender();
+      } catch {
+        // Keep in-memory state when reload fails.
+      }
+    }
+  }
+});
+
+tournamentMatchesUi.helperFillButton.addEventListener("click", async () => {
+  const activePhaseId = Number(activeStartedMatchPhaseId);
+  if (!Number.isInteger(activePhaseId) || activePhaseId <= 0) {
+    window.alert("Keine laufende Phase aktiv. Bitte zuerst eine Phase starten.");
+    return;
+  }
+
+  const phaseName = getPhaseDisplayName(activePhaseId);
+  const confirmed = window.confirm(
+    `Temporaere Funktion: Alle Spiele mit festen Teams in Phase ${phaseName} mit Zufalls-Satzergebnissen fuellen?`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const result = await fillRandomResultsForActivePhase();
+    await reloadMatchesAndRender();
+    window.alert(`Zufalls-Ergebnisse gespeichert: ${result.updatedMatches} Matches aktualisiert.`);
+  } catch {
+    window.alert("Zufalls-Ergebnisse konnten nicht gespeichert werden.");
   }
 });
 
