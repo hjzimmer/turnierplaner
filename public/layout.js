@@ -116,10 +116,13 @@ export function mountScoringModeLayout(targetElement) {
             <input type="radio" name="mode_key" value="vereinfachter_turniermodus" />
             <div class="scoring-mode-option-content">
               <h4>Vereinfachter Turniermodus</h4>
-              <p>
-                Fokus auf schnelle und einfache Auswertung. Ergebnisse werden kompakt erfasst
-                und direkt als Match-Ausgang gewertet.
-              </p>
+              <p class="scoring-mode-summary">Schnelle Auswertung mit Satzpunkten pro Satz.</p>
+              <ul class="scoring-mode-rules">
+                <li><strong>Matchsieger:</strong> Team mit mehr Satzsiegen, bei Gleichstand Match-Unentschieden.</li>
+                <li><strong>Gruppenpunkte:</strong> pro Satzsieg 2 Punkte, pro Satz-Unentschieden 1 Punkt je Team.</li>
+                <li><strong>Rangfolge:</strong> Team-Gesamtpunkte vor Satzdifferenz (S+ minus S-) vor direktem Vergleich vor Punktedifferenz.</li>
+                <li><strong>Satzgleichstand:</strong> erlaubt.</li>
+              </ul>
             </div>
           </label>
 
@@ -127,10 +130,13 @@ export function mountScoringModeLayout(targetElement) {
             <input type="radio" name="mode_key" value="offizieller_modus" />
             <div class="scoring-mode-option-content">
               <h4>Offizieller Modus</h4>
-              <p>
-                Vollstaendige Wettkampfwertung mit detaillierter Beruecksichtigung der Satzresultate
-                gemaess offiziellen Turnierregeln.
-              </p>
+              <p class="scoring-mode-summary">Turnierwertung nach 3/0- bzw. 2/1-Logik auf Match-Ebene.</p>
+              <ul class="scoring-mode-rules">
+                <li><strong>Matchsieger:</strong> Team mit mehr Satzsiegen.</li>
+                <li><strong>Gruppenpunkte:</strong> Sieger 3, Verlierer 0 (bei klarer Niederlage) oder Sieger 2, Verlierer 1 (bei knapper Niederlage).</li>
+                <li><strong>Rangfolge:</strong> Team-Gesamtpunkte vor Satzdifferenz (S+ minus S-) vor direktem Vergleich vor Punktedifferenz.</li>
+                <li><strong>Satzgleichstand:</strong> nicht erlaubt.</li>
+              </ul>
             </div>
           </label>
         </section>

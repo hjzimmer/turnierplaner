@@ -57,6 +57,11 @@ import {
   renderTournamentMatchesTable,
 } from "./tournament-planning-layout.js";
 import {
+  mountTournamentResultsLayout,
+  renderTournamentResultsOverview,
+} from "./tournament-results-layout.js";
+import { loadTournamentResultsOverview } from "./tournament-results-store.js";
+import {
   loadTeamsWithIds,
   loadMatches,
   saveMatchesForPhase,
@@ -77,6 +82,7 @@ const menuGroups = [...document.querySelectorAll(".menu-group")];
 const levelOneButtons = [...document.querySelectorAll(".menu-btn.level-1")];
 const menuButtons = [...document.querySelectorAll(".menu-btn.level-2")];
 const sections = [...document.querySelectorAll(".content-section")];
+const LAST_ACTIVE_VIEW_STORAGE_KEY = "relation-cards-active-view";
 const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
@@ -84,6 +90,7 @@ const scoringModeMount = document.getElementById("scoringModeMount");
 const placementsMount = document.getElementById("placementsMount");
 const tournamentPlanningMount = document.getElementById("tournamentPlanningMount");
 const tournamentMatchesMount = document.getElementById("tournamentMatchesMount");
+const tournamentResultsMount = document.getElementById("tournamentResultsMount");
 
 const mobileQuery = window.matchMedia("(max-width: 880px)");
 
@@ -93,6 +100,7 @@ const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
 const scoringModeUi = mountScoringModeLayout(scoringModeMount);
 const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
 const tournamentMatchesUi = mountTournamentMatchesLayout(tournamentMatchesMount);
+const tournamentResultsUi = mountTournamentResultsLayout(tournamentResultsMount);
 let teamsWithIds = [];
 let persistedMatches = [];
 let persistedSettings = getDefaultTournamentSettings();
@@ -229,27 +237,146 @@ function toggleMenuGroup(button) {
 }
 
 /**
+ * Returns all currently available view names from menu buttons and screen sections.
+ * @returns {Set<string>} Set with valid view names.
+ */
+function getAvailableViewNames() {
+  const names = new Set();
+
+  menuButtons.forEach((button) => {
+    const viewName = String(button.dataset.view || "").trim();
+    if (viewName) {
+      names.add(viewName);
+    }
+  });
+
+  sections.forEach((section) => {
+    const screenName = String(section.dataset.screen || "").trim();
+    if (screenName) {
+      names.add(screenName);
+    }
+  });
+
+  return names;
+}
+
+/**
+ * Returns the default fallback view name.
+ * @returns {string} Default view name.
+ */
+function getDefaultViewName() {
+  const firstMenuView = String(menuButtons[0]?.dataset?.view || "").trim();
+  return firstMenuView || "turniersetup";
+}
+
+/**
+ * Resolves a candidate view name to a valid existing view.
+ * @param {string} candidateViewName Candidate view name.
+ * @returns {string} Valid resolved view name.
+ */
+function resolveViewName(candidateViewName) {
+  const normalizedCandidate = String(candidateViewName || "").trim();
+  const availableViews = getAvailableViewNames();
+  if (availableViews.has(normalizedCandidate)) {
+    return normalizedCandidate;
+  }
+  return getDefaultViewName();
+}
+
+/**
+ * Persists the active view name in local storage.
+ * @param {string} viewName Active view name to persist.
+ * @returns {void}
+ */
+function persistActiveViewName(viewName) {
+  try {
+    window.localStorage.setItem(LAST_ACTIVE_VIEW_STORAGE_KEY, String(viewName || ""));
+  } catch {
+    // Ignore storage errors (private mode, disabled storage, etc.).
+  }
+}
+
+/**
+ * Loads the last persisted active view name from local storage.
+ * @returns {string|null} Persisted view name or null when unavailable.
+ */
+function loadPersistedActiveViewName() {
+  try {
+    const storedView = window.localStorage.getItem(LAST_ACTIVE_VIEW_STORAGE_KEY);
+    return storedView ? String(storedView) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Activates one content view and updates active menu styling.
  * @param {string} viewName Target view identifier.
  * @returns {void}
  */
 function openView(viewName) {
+  const targetViewName = resolveViewName(viewName);
+
   menuButtons.forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.view === viewName);
+    button.classList.toggle("is-active", button.dataset.view === targetViewName);
   });
 
   sections.forEach((section) => {
-    const isVisible = section.dataset.screen === viewName;
+    const isVisible = section.dataset.screen === targetViewName;
     section.hidden = !isVisible;
   });
 
-  if (viewName === "turnierplanung-matches") {
+  persistActiveViewName(targetViewName);
+
+  if (targetViewName === "turnierplanung-matches") {
     renderAllTournamentMatchesTable();
+  }
+
+  if (targetViewName === "turnierergebnisse") {
+    loadAndRenderTournamentResultsOverview();
   }
 
   if (isMobile()) {
     appLayout.classList.remove("is-open-mobile");
     syncBackdrop();
+  }
+}
+
+/**
+ * Returns the currently visible content view key.
+ * @returns {string|null} Active view key or null when none is visible.
+ */
+function getActiveViewName() {
+  const activeSection = sections.find((section) => !section.hidden);
+  return activeSection ? String(activeSection.dataset.screen || "") : null;
+}
+
+/**
+ * Loads and renders the tournament results overview page.
+ * @returns {Promise<void>} Resolves after render attempt.
+ */
+async function loadAndRenderTournamentResultsOverview() {
+  if (!tournamentResultsUi?.content) {
+    return;
+  }
+
+  tournamentResultsUi.content.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "placeholder-box";
+  loading.textContent = "Turnierergebnisse werden geladen...";
+  tournamentResultsUi.content.appendChild(loading);
+
+  try {
+    const overview = await loadTournamentResultsOverview();
+    renderTournamentResultsOverview(tournamentResultsUi.content, overview);
+  } catch (error) {
+    tournamentResultsUi.content.innerHTML = "";
+    const errorBox = document.createElement("div");
+    errorBox.className = "placeholder-box";
+    errorBox.textContent = error instanceof Error
+      ? error.message
+      : "Turnierergebnisse konnten nicht geladen werden.";
+    tournamentResultsUi.content.appendChild(errorBox);
   }
 }
 
@@ -793,13 +920,18 @@ function isPhaseScheduleLocked(phaseId) {
 /**
  * Resolves a readable team label for one id.
  * @param {number|null} teamId Team id to resolve.
+ * @param {string|null|undefined} teamRef Team reference fallback.
  * @param {Map<number, string>} teamNameById Team lookup map.
  * @returns {string} Display label.
  */
-function getTeamNameLabel(teamId, teamNameById) {
+function getTeamNameLabel(teamId, teamRef, teamNameById) {
   const numericId = Number(teamId);
   if (Number.isInteger(numericId) && numericId > 0) {
     return teamNameById.get(numericId) || `Team #${numericId}`;
+  }
+  const fallbackRef = String(teamRef || "").trim();
+  if (fallbackRef) {
+    return fallbackRef;
   }
   return "?";
 }
@@ -917,8 +1049,8 @@ function renderAllTournamentMatchesTable() {
 
   const rows = sortedMatches.map((match, index) => {
     const isPause = String(match.entry_type || "match") === "pause";
-    const team1Label = getTeamNameLabel(match.team1_id, teamNameById);
-    const team2Label = getTeamNameLabel(match.team2_id, teamNameById);
+    const team1Label = getTeamNameLabel(match.team1_id, match.team1_ref, teamNameById);
+    const team2Label = getTeamNameLabel(match.team2_id, match.team2_ref, teamNameById);
     const teamsLabel = isPause
       ? `Pause (${Math.max(1, Number(match.duration_minutes) || 0)} min)`
       : `${team1Label} - ${team2Label}`;
@@ -928,6 +1060,40 @@ function renderAllTournamentMatchesTable() {
       ? teamNameById.get(refereeId) || `Team #${refereeId}`
       : "-- Kein Schiedsrichter --";
 
+    const isFinished = Number(match.is_finished) > 0;
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    const winnerId = Number(match.winner_id);
+    const loserId = Number(match.loser_id);
+    let team1OutcomeClass = "";
+    let team2OutcomeClass = "";
+
+    if (!isPause && isFinished) {
+      const hasWinner = Number.isInteger(winnerId) && winnerId > 0;
+      const hasLoser = Number.isInteger(loserId) && loserId > 0;
+      if (
+        hasWinner &&
+        hasLoser &&
+        Number.isInteger(team1Id) &&
+        team1Id > 0 &&
+        Number.isInteger(team2Id) &&
+        team2Id > 0
+      ) {
+        if (team1Id === winnerId && team2Id === loserId) {
+          team1OutcomeClass = "is-winner";
+          team2OutcomeClass = "is-loser";
+        } else if (team2Id === winnerId && team1Id === loserId) {
+          team1OutcomeClass = "is-loser";
+          team2OutcomeClass = "is-winner";
+        }
+      }
+
+      if (!team1OutcomeClass && !team2OutcomeClass) {
+        team1OutcomeClass = "is-draw";
+        team2OutcomeClass = "is-draw";
+      }
+    }
+
     return {
       matchId: Number(match.id),
       phaseId: Number(match.phase_id),
@@ -936,10 +1102,15 @@ function renderAllTournamentMatchesTable() {
       number: index + 1,
       roundLabel: String(match.block_name || phaseNameById.get(Number(match.phase_id)) || "Match"),
       teamsLabel,
+      team1Label,
+      team2Label,
+      team1OutcomeClass,
+      team2OutcomeClass,
+      isPause,
       refereeId,
       refereeLabel,
       refereeOptions: getRefereeOptionsForMatch(match, teamNameById),
-      isFinished: Number(match.is_finished) > 0,
+      isFinished,
       setResultsText: String(match.set_results_text || "").trim(),
       canEditReferee: !isPause && isRefereeAssignableMatch(match),
       showActions: !isPause,
@@ -1016,6 +1187,9 @@ function parseSetScoreValue(value) {
 async function reloadMatchesAndRender() {
   persistedMatches = await loadMatches();
   renderAllMatchGrid();
+  if (getActiveViewName() === "turnierergebnisse") {
+    await loadAndRenderTournamentResultsOverview();
+  }
 }
 
 /**
@@ -1113,8 +1287,8 @@ async function openMatchResultDialog(matchId) {
       .map((team) => [Number(team.id), team.name])
       .filter(([teamId]) => Number.isInteger(teamId) && teamId > 0)
   );
-  const team1Label = getTeamNameLabel(match.team1_id, teamNameById);
-  const team2Label = getTeamNameLabel(match.team2_id, teamNameById);
+  const team1Label = getTeamNameLabel(match.team1_id, match.team1_ref, teamNameById);
+  const team2Label = getTeamNameLabel(match.team2_id, match.team2_ref, teamNameById);
 
   let persistedSets = [];
   try {
@@ -1210,8 +1384,8 @@ async function openMatchResultDialog(matchId) {
       await saveMatchSets(matchId, setsPayload);
       closeActiveMatchResultDialog();
       await reloadMatchesAndRender();
-    } catch {
-      window.alert("Satzdaten konnten nicht gespeichert werden.");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Satzdaten konnten nicht gespeichert werden.");
     }
   });
 }
@@ -3143,8 +3317,8 @@ tournamentMatchesUi.tableArea.addEventListener("click", async (event) => {
     try {
       await deleteMatchSets(matchId);
       await reloadMatchesAndRender();
-    } catch {
-      window.alert("Satzdaten konnten nicht geloescht werden.");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Satzdaten konnten nicht geloescht werden.");
     }
   }
 });
@@ -3240,8 +3414,8 @@ tournamentMatchesUi.helperFillButton.addEventListener("click", async () => {
     const result = await fillRandomResultsForActivePhase();
     await reloadMatchesAndRender();
     window.alert(`Zufalls-Ergebnisse gespeichert: ${result.updatedMatches} Matches aktualisiert.`);
-  } catch {
-    window.alert("Zufalls-Ergebnisse konnten nicht gespeichert werden.");
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Zufalls-Ergebnisse konnten nicht gespeichert werden.");
   }
 });
 
@@ -3609,7 +3783,7 @@ mobileQuery.addEventListener("change", () => {
   syncBackdrop();
 });
 
-openView("turniersetup");
+openView(loadPersistedActiveViewName() || getDefaultViewName());
 initializeTournamentSettings();
 initializeScoringMode();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.

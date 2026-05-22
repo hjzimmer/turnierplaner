@@ -102,7 +102,26 @@
                 </li>
                 <li>
                   <button class="menu-btn level-2" type="button" data-view="turnierplanung-matches">
-                    Alle Matches
+                    Ergebniseingabe
+                  </button>
+                </li>
+              </ul>
+            </li>
+
+            <li class="menu-group">
+              <button
+                class="menu-btn level-1"
+                type="button"
+                aria-expanded="false"
+                aria-controls="tournamentResultsSubmenu"
+                data-group="tournamentResults"
+              >
+                Turnierergebnisse
+              </button>
+              <ul class="menu-level level-2" id="tournamentResultsSubmenu">
+                <li>
+                  <button class="menu-btn level-2" type="button" data-view="turnierergebnisse">
+                    Uebersicht
                   </button>
                 </li>
               </ul>
@@ -180,7 +199,7 @@
 
         <section class="content-section phases-full" data-screen="turnierplanung-matches" hidden>
           <header class="section-head">
-            <h2>Turnierplanung / Alle Matches</h2>
+            <h2>Turnierplanung / Ergebniseingabe</h2>
             <p>
               Tabellarische Uebersicht aller geplanten Spiele. Schiedsrichter koennen pro Zeitslot
               direkt ueber das Dropdown angepasst werden.
@@ -188,6 +207,17 @@
           </header>
 
           <div id="tournamentMatchesMount"></div>
+        </section>
+
+        <section class="content-section phases-full" data-screen="turnierergebnisse" hidden>
+          <header class="section-head">
+            <h2>Turnierergebnisse</h2>
+            <p>
+              Ergebnisuebersicht pro Phase mit Gruppentabellen, Matchlisten und Gesamtplatzierung.
+            </p>
+          </header>
+
+          <div id="tournamentResultsMount"></div>
         </section>
       </main>
 

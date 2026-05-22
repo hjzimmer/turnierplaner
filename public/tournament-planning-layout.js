@@ -466,6 +466,40 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
   const t1Label = resolveTeamLabel(match.team1_id, match.team1_ref, teamNameById);
   const t2Label = resolveTeamLabel(match.team2_id, match.team2_ref, teamNameById);
   const refereeLabel = resolveRefereeLabel(match, teamNameById);
+  const setResultsText = String(match.set_results_text || "").trim();
+
+  let team1OutcomeClass = "";
+  let team2OutcomeClass = "";
+  if (match.is_finished) {
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    const winnerId = Number(match.winner_id);
+    const loserId = Number(match.loser_id);
+    const hasWinner = Number.isInteger(winnerId) && winnerId > 0;
+    const hasLoser = Number.isInteger(loserId) && loserId > 0;
+
+    if (
+      hasWinner &&
+      hasLoser &&
+      Number.isInteger(team1Id) &&
+      team1Id > 0 &&
+      Number.isInteger(team2Id) &&
+      team2Id > 0
+    ) {
+      if (team1Id === winnerId && team2Id === loserId) {
+        team1OutcomeClass = "is-winner";
+        team2OutcomeClass = "is-loser";
+      } else if (team2Id === winnerId && team1Id === loserId) {
+        team1OutcomeClass = "is-loser";
+        team2OutcomeClass = "is-winner";
+      }
+    }
+
+    if (!team1OutcomeClass && !team2OutcomeClass) {
+      team1OutcomeClass = "is-draw";
+      team2OutcomeClass = "is-draw";
+    }
+  }
 
   const meta = document.createElement("div");
   meta.className = "tp-card-meta";
@@ -483,7 +517,32 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
 
   const line = document.createElement("div");
   line.className = "tp-card-title";
-  line.textContent = `${t1Label} - ${t2Label}`;
+  const teamsWrap = document.createElement("span");
+  teamsWrap.className = "tp-teams-inline";
+
+  const team1Span = document.createElement("span");
+  team1Span.className = `tp-team ${team1OutcomeClass}`.trim();
+  team1Span.textContent = t1Label;
+
+  const sepSpan = document.createElement("span");
+  sepSpan.className = "tp-team-sep";
+  sepSpan.textContent = " - ";
+
+  const team2Span = document.createElement("span");
+  team2Span.className = `tp-team ${team2OutcomeClass}`.trim();
+  team2Span.textContent = t2Label;
+
+  teamsWrap.appendChild(team1Span);
+  teamsWrap.appendChild(sepSpan);
+  teamsWrap.appendChild(team2Span);
+  line.appendChild(teamsWrap);
+
+  if (match.is_finished) {
+    const resultChip = document.createElement("span");
+    resultChip.className = "tp-card-result-chip";
+    resultChip.textContent = setResultsText || "erfasst";
+    line.appendChild(resultChip);
+  }
 
   const refLine = document.createElement("div");
   refLine.className = "tp-card-referee";
@@ -492,13 +551,6 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
   card.appendChild(meta);
   card.appendChild(line);
   card.appendChild(refLine);
-
-  if (match.is_finished) {
-    const badge = document.createElement("span");
-    badge.className = "tp-match-finished-badge";
-    badge.textContent = "Beendet";
-    card.appendChild(badge);
-  }
 
   return card;
 }
@@ -737,12 +789,20 @@ export function renderTournamentMatchesTable(tableArea, rows) {
       ? `<div class="tm-set-results">${row.setResultsText}</div>`
       : "";
 
+    const teamsHtml = row.isPause
+      ? escapeHtml(String(row.teamsLabel || ""))
+      : `
+        <span class="tm-team ${String(row.team1OutcomeClass || "")}">${escapeHtml(String(row.team1Label || ""))}</span>
+        <span class="tm-team-sep"> - </span>
+        <span class="tm-team ${String(row.team2OutcomeClass || "")}">${escapeHtml(String(row.team2Label || ""))}</span>
+      `;
+
     tr.innerHTML = `
       <td class="tm-time">${row.startTime}</td>
       <td><span class="tm-chip tm-chip-field">${fieldLabel}</span></td>
       <td>${row.number}</td>
       <td><span class="tm-chip tm-chip-round">${row.roundLabel}</span></td>
-      <td class="tm-teams">${row.teamsLabel}</td>
+      <td class="tm-teams">${teamsHtml}</td>
       <td class="tm-ref-cell"></td>
       <td>
         <span class="tm-status ${statusClass}">${statusText}</span>
@@ -790,4 +850,18 @@ export function renderTournamentMatchesTable(tableArea, rows) {
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   tableArea.appendChild(tableWrap);
+}
+
+/**
+ * Escapes minimal HTML-sensitive characters for safe text interpolation.
+ * @param {string} value Input text value.
+ * @returns {string} Escaped string.
+ */
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }

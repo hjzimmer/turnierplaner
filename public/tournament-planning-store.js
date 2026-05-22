@@ -125,7 +125,16 @@ export async function saveMatchSets(matchId, sets) {
     body: JSON.stringify({ sets }),
   });
   if (!response.ok) {
-    throw new Error("Satzdaten konnten nicht gespeichert werden.");
+    let message = "Satzdaten konnten nicht gespeichert werden.";
+    try {
+      const payload = await response.json();
+      if (payload?.error) {
+        message = String(payload.error);
+      }
+    } catch (_) {
+      // Keep default message when error payload is not readable.
+    }
+    throw new Error(message);
   }
   const payload = await response.json();
   return Array.isArray(payload.sets) ? payload.sets : [];
@@ -141,6 +150,15 @@ export async function deleteMatchSets(matchId) {
     method: "DELETE",
   });
   if (!response.ok) {
-    throw new Error("Satzdaten konnten nicht geloescht werden.");
+    let message = "Satzdaten konnten nicht geloescht werden.";
+    try {
+      const payload = await response.json();
+      if (payload?.error) {
+        message = String(payload.error);
+      }
+    } catch (_) {
+      // Keep default message when error payload is not readable.
+    }
+    throw new Error(message);
   }
 }

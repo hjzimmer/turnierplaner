@@ -674,23 +674,32 @@ async function loadConfiguredSetCount() {
 }
 
 /**
- * Calculates match completion and winner/loser ids from set rows.
- * @param {Array<object>} sets Set rows with team1_score, team2_score, is_finished.
- * @param {number|null} team1Id Team 1 id from match row.
- * @param {number|null} team2Id Team 2 id from match row.
- * @param {number} configuredSetCount Configured number of sets for one match.
- * @returns {{ isFinished: number, winnerId: number|null, loserId: number|null }} Match outcome.
+ * Loads the persisted scoring mode key.
+ * @returns {Promise<"vereinfachter_turniermodus"|"offizieller_modus">} Active scoring mode key.
  */
-function calculateMatchOutcomeFromSets(sets, team1Id, team2Id, configuredSetCount) {
-  let team1Wins = 0;
-  let team2Wins = 0;
-  let team1Points = 0;
-  let team2Points = 0;
-  let finishedSetCount = 0;
+async function loadScoringModeKey() {
+  const row = await get("SELECT mode_key FROM scoring_mode_state WHERE id = 1");
+  return normalizeScoringModeKey(row?.mode_key);
+}
 
-  const requiredSetWins = Math.floor(Math.max(1, configuredSetCount) / 2) + 1;
+/**
+ * Aggregates finished set statistics for one match.
+ * @param {Array<object>} sets Set rows with team1_score, team2_score, is_finished.
+ * @returns {{team1Wins: number, team2Wins: number, team1Draws: number, team2Draws: number, team1Points: number, team2Points: number, finishedSetCount: number, hasSetDraw: boolean}} Aggregated set statistics.
+ */
+function aggregateFinishedSetStats(sets) {
+  const stats = {
+    team1Wins: 0,
+    team2Wins: 0,
+    team1Draws: 0,
+    team2Draws: 0,
+    team1Points: 0,
+    team2Points: 0,
+    finishedSetCount: 0,
+    hasSetDraw: false,
+  };
 
-  sets.forEach((entry) => {
+  (Array.isArray(sets) ? sets : []).forEach((entry) => {
     if (!normalizeBoolean(entry?.is_finished, false)) {
       return;
     }
@@ -700,58 +709,141 @@ function calculateMatchOutcomeFromSets(sets, team1Id, team2Id, configuredSetCoun
     if (!Number.isFinite(team1Score) || !Number.isFinite(team2Score)) {
       return;
     }
-    finishedSetCount += 1;
-    team1Points += team1Score;
-    team2Points += team2Score;
+
+    stats.finishedSetCount += 1;
+    stats.team1Points += team1Score;
+    stats.team2Points += team2Score;
+
     if (team1Score === team2Score) {
+      stats.team1Draws += 1;
+      stats.team2Draws += 1;
+      stats.hasSetDraw = true;
       return;
     }
 
     if (team1Score > team2Score) {
-      team1Wins += 1;
+      stats.team1Wins += 1;
     } else {
-      team2Wins += 1;
+      stats.team2Wins += 1;
     }
   });
 
-  const hasAllConfiguredSets = finishedSetCount >= Math.max(1, configuredSetCount);
+  return stats;
+}
+
+/**
+ * Calculates match points for one team pair in the simplified scoring mode.
+ * @param {{team1Wins: number, team2Wins: number, team1Draws: number, team2Draws: number}} setStats Aggregated set statistics.
+ * @returns {{team1MatchPoints: number, team2MatchPoints: number}} Match points for group ranking.
+ */
+function calculateSimplifiedGroupMatchPoints(setStats) {
+  return {
+    team1MatchPoints: setStats.team1Wins * 2 + setStats.team1Draws,
+    team2MatchPoints: setStats.team2Wins * 2 + setStats.team2Draws,
+  };
+}
+
+/**
+ * Calculates match points for one team pair in the official scoring mode.
+ * @param {{team1Wins: number, team2Wins: number}} setStats Aggregated set statistics.
+ * @param {number} configuredSetCount Configured number of sets per match.
+ * @returns {{team1MatchPoints: number, team2MatchPoints: number}} Match points for group ranking.
+ */
+function calculateOfficialGroupMatchPoints(setStats, configuredSetCount) {
+  if (setStats.team1Wins === setStats.team2Wins) {
+    return {
+      team1MatchPoints: 0,
+      team2MatchPoints: 0,
+    };
+  }
+
+  const winnerIsTeam1 = setStats.team1Wins > setStats.team2Wins;
+  const loserWins = winnerIsTeam1 ? setStats.team2Wins : setStats.team1Wins;
+  const isShortMatch = Math.max(1, configuredSetCount) <= 3;
+  const winnerPoints = isShortMatch
+    ? (loserWins === 0 ? 3 : 2)
+    : (loserWins <= 1 ? 3 : 2);
+  const loserPoints = winnerPoints === 3 ? 0 : 1;
+
+  return winnerIsTeam1
+    ? { team1MatchPoints: winnerPoints, team2MatchPoints: loserPoints }
+    : { team1MatchPoints: loserPoints, team2MatchPoints: winnerPoints };
+}
+
+/**
+ * Calculates match completion and winner/loser ids from set rows.
+ * @param {Array<object>} sets Set rows with team1_score, team2_score, is_finished.
+ * @param {number|null} team1Id Team 1 id from match row.
+ * @param {number|null} team2Id Team 2 id from match row.
+ * @param {number} configuredSetCount Configured number of sets for one match.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} scoringModeKey Active scoring mode.
+ * @param {{allowDrawOutcome?: boolean}} [options] Additional validation options.
+ * @returns {{ isFinished: number, winnerId: number|null, loserId: number|null, isDraw: boolean, error: string|null, setStats: object }} Match outcome.
+ */
+function calculateMatchOutcomeFromSets(
+  sets,
+  team1Id,
+  team2Id,
+  configuredSetCount,
+  scoringModeKey,
+  options = {}
+) {
+  const setStats = aggregateFinishedSetStats(sets);
+  const hasAllConfiguredSets = setStats.finishedSetCount >= Math.max(1, configuredSetCount);
   const isFinished = hasAllConfiguredSets ? 1 : 0;
+  const allowDrawOutcome = options.allowDrawOutcome !== false;
 
   if (isFinished === 0) {
     return {
       isFinished: 0,
       winnerId: null,
       loserId: null,
+      isDraw: false,
+      error: null,
+      setStats,
     };
   }
 
-  if (team1Wins > team2Wins && Number.isInteger(team1Id) && team1Id > 0) {
+  if (scoringModeKey === "offizieller_modus" && setStats.hasSetDraw) {
+    return {
+      isFinished: 0,
+      winnerId: null,
+      loserId: null,
+      isDraw: false,
+      error: "Im offiziellen Modus sind Satz-Unentschieden nicht erlaubt.",
+      setStats,
+    };
+  }
+
+  if (setStats.team1Wins > setStats.team2Wins && Number.isInteger(team1Id) && team1Id > 0) {
     return {
       isFinished: 1,
       winnerId: team1Id,
       loserId: Number.isInteger(team2Id) && team2Id > 0 ? team2Id : null,
+      isDraw: false,
+      error: null,
+      setStats,
     };
   }
-  if (team2Wins > team1Wins && Number.isInteger(team2Id) && team2Id > 0) {
+  if (setStats.team2Wins > setStats.team1Wins && Number.isInteger(team2Id) && team2Id > 0) {
     return {
       isFinished: 1,
       winnerId: team2Id,
       loserId: Number.isInteger(team1Id) && team1Id > 0 ? team1Id : null,
+      isDraw: false,
+      error: null,
+      setStats,
     };
   }
 
-  if (team1Points > team2Points && Number.isInteger(team1Id) && team1Id > 0) {
+  if (!allowDrawOutcome) {
     return {
-      isFinished: 1,
-      winnerId: team1Id,
-      loserId: Number.isInteger(team2Id) && team2Id > 0 ? team2Id : null,
-    };
-  }
-  if (team2Points > team1Points && Number.isInteger(team2Id) && team2Id > 0) {
-    return {
-      isFinished: 1,
-      winnerId: team2Id,
-      loserId: Number.isInteger(team1Id) && team1Id > 0 ? team1Id : null,
+      isFinished: 0,
+      winnerId: null,
+      loserId: null,
+      isDraw: true,
+      error: "Dieses Match benoetigt einen eindeutigen Gewinner.",
+      setStats,
     };
   }
 
@@ -759,7 +851,839 @@ function calculateMatchOutcomeFromSets(sets, team1Id, team2Id, configuredSetCoun
     isFinished: 1,
     winnerId: null,
     loserId: null,
+    isDraw: true,
+    error: null,
+    setStats,
   };
+}
+
+/**
+ * Builds a map of team rows keyed by team name.
+ * @param {Array<object>} teams Team rows from the database.
+ * @returns {Map<string, {id: number, name: string}>} Teams keyed by name.
+ */
+function createTeamsByNameMap(teams) {
+  return new Map(
+    (Array.isArray(teams) ? teams : [])
+      .map((team) => ({ id: Number(team.id), name: normalizeString(team.name) }))
+      .filter((team) => Number.isInteger(team.id) && team.id > 0 && team.name)
+      .map((team) => [team.name, team])
+  );
+}
+
+/**
+ * Builds a map of team rows keyed by id.
+ * @param {Array<object>} teams Team rows from the database.
+ * @returns {Map<number, {id: number, name: string}>} Teams keyed by id.
+ */
+function createTeamsByIdMap(teams) {
+  return new Map(
+    (Array.isArray(teams) ? teams : [])
+      .map((team) => ({ id: Number(team.id), name: normalizeString(team.name) }))
+      .filter((team) => Number.isInteger(team.id) && team.id > 0)
+      .map((team) => [team.id, team])
+  );
+}
+
+/**
+ * Returns a stable display name for one phase block.
+ * @param {object|null|undefined} block Phase block row.
+ * @returns {string} Block display name.
+ */
+function getPhaseBlockDisplayName(block) {
+  const blockName = normalizeString(block?.block_name);
+  if (blockName) {
+    return blockName;
+  }
+  const blockId = Number(block?.id);
+  return Number.isInteger(blockId) && blockId > 0 ? `Block ${blockId}` : "Block";
+}
+
+/**
+ * Generates round-robin pairs for resolved team descriptors.
+ * @param {Array<object>} teamEntries Ordered team descriptors.
+ * @returns {Array<{round: number, team1: object, team2: object}>} Generated match pairs.
+ */
+function generateResolvedRoundRobin(teamEntries) {
+  if (!Array.isArray(teamEntries) || teamEntries.length < 2) {
+    return [];
+  }
+
+  const teams = [...teamEntries];
+  if (teams.length % 2 !== 0) {
+    teams.push(null);
+  }
+
+  const fixed = teams[0];
+  const rotating = teams.slice(1);
+  const numRounds = teams.length - 1;
+  const perRound = teams.length / 2;
+  const matches = [];
+
+  for (let round = 0; round < numRounds; round += 1) {
+    for (let index = 0; index < perRound; index += 1) {
+      const team1 = index === 0 ? fixed : rotating[index - 1];
+      const team2 = index === 0 ? rotating[rotating.length - 1] : rotating[rotating.length - 1 - index];
+      if (team1 && team2) {
+        matches.push({ round, team1, team2 });
+      }
+    }
+
+    rotating.unshift(rotating.pop());
+  }
+
+  return matches;
+}
+
+/**
+ * Converts a resolved team descriptor into persisted match team fields.
+ * @param {{id?: number|null, name?: string|null, ref?: string|null}|null} descriptor Resolved descriptor.
+ * @returns {{teamId: number|null, teamRef: string|null}} Persistable team fields.
+ */
+function descriptorToMatchFields(descriptor) {
+  if (!descriptor) {
+    return { teamId: null, teamRef: null };
+  }
+
+  const descriptorId = Number(descriptor.id);
+  if (Number.isInteger(descriptorId) && descriptorId > 0) {
+    return {
+      teamId: descriptorId,
+      teamRef: null,
+    };
+  }
+
+  return {
+    teamId: null,
+    teamRef: normalizeString(descriptor.ref) || normalizeString(descriptor.name) || null,
+  };
+}
+
+/**
+ * Resolves one block slot to a current team descriptor.
+ * @param {{entry_value?: string|null}|null} slot Phase block slot.
+ * @param {{teamsByName: Map<string, object>, teamsById: Map<number, object>, blockById: Map<number, object>, standingsByBlockId: Map<number, Array<object>>, firstMatchByBlockId: Map<number, object>, completedGroupBlockIds?: Set<number>}} context Resolution context.
+ * @returns {{id: number|null, name: string|null, ref: string|null}|null} Resolved descriptor.
+ */
+function resolveBlockSlotDescriptor(slot, context) {
+  const entryValue = normalizeString(slot?.entry_value);
+  if (!entryValue) {
+    return null;
+  }
+
+  if (entryValue.startsWith("team:")) {
+    const teamName = entryValue.slice(5);
+    const team = context.teamsByName.get(teamName);
+    return team ? { id: team.id, name: team.name, ref: null } : { id: null, name: teamName, ref: null };
+  }
+
+  if (entryValue.startsWith("placement:")) {
+    const [, rawBlockId, rawRank] = entryValue.split(":");
+    const sourceBlockId = Number(rawBlockId);
+    const rank = Number(rawRank);
+    const sourceBlock = context.blockById.get(sourceBlockId);
+    const sourceName = getPhaseBlockDisplayName(sourceBlock);
+
+    // Group placement references are only materialized after all group matches are completed.
+    if (
+      normalizeString(sourceBlock?.block_type) === "gruppe" &&
+      !(context.completedGroupBlockIds instanceof Set && context.completedGroupBlockIds.has(sourceBlockId))
+    ) {
+      return { id: null, name: null, ref: `Platz ${rank} (${sourceName})` };
+    }
+
+    const standings = context.standingsByBlockId.get(sourceBlockId) || [];
+    const rankedTeam = standings.find((entry) => Number(entry.rank) === rank);
+    if (rankedTeam && Number.isInteger(Number(rankedTeam.team_id)) && Number(rankedTeam.team_id) > 0) {
+      const team = context.teamsById.get(Number(rankedTeam.team_id));
+      return {
+        id: Number(rankedTeam.team_id),
+        name: team?.name || normalizeString(rankedTeam.team_name) || null,
+        ref: null,
+      };
+    }
+    return { id: null, name: null, ref: `Platz ${rank} (${sourceName})` };
+  }
+
+  if (entryValue.startsWith("match-winner:")) {
+    const sourceBlockId = Number(entryValue.split(":")[1]);
+    const sourceBlock = context.blockById.get(sourceBlockId);
+    const sourceName = getPhaseBlockDisplayName(sourceBlock);
+    const sourceMatch = context.firstMatchByBlockId.get(sourceBlockId);
+    const winnerId = Number(sourceMatch?.winner_id);
+    if (Number.isInteger(winnerId) && winnerId > 0) {
+      const team = context.teamsById.get(winnerId);
+      return { id: winnerId, name: team?.name || null, ref: null };
+    }
+    return { id: null, name: null, ref: `Gewinner (${sourceName})` };
+  }
+
+  if (entryValue.startsWith("match-loser:")) {
+    const sourceBlockId = Number(entryValue.split(":")[1]);
+    const sourceBlock = context.blockById.get(sourceBlockId);
+    const sourceName = getPhaseBlockDisplayName(sourceBlock);
+    const sourceMatch = context.firstMatchByBlockId.get(sourceBlockId);
+    const loserId = Number(sourceMatch?.loser_id);
+    if (Number.isInteger(loserId) && loserId > 0) {
+      const team = context.teamsById.get(loserId);
+      return { id: loserId, name: team?.name || null, ref: null };
+    }
+    return { id: null, name: null, ref: `Verlierer (${sourceName})` };
+  }
+
+  return { id: null, name: null, ref: entryValue };
+}
+
+/**
+ * Builds the expected pair list for one block based on current references.
+ * @param {object} block Phase block row with slots.
+ * @param {object} context Resolution context.
+ * @returns {Array<{team1: object|null, team2: object|null}>} Expected match descriptors for this block.
+ */
+function buildExpectedBlockPairs(block, context) {
+  const orderedSlots = [...(Array.isArray(block?.slots) ? block.slots : [])].sort(
+    (left, right) => Number(left.slot_index) - Number(right.slot_index)
+  );
+  const descriptors = orderedSlots.map((slot) => resolveBlockSlotDescriptor(slot, context));
+
+  if (normalizeString(block?.block_type) === "einzelspiel") {
+    return descriptors.length >= 2 ? [{ team1: descriptors[0], team2: descriptors[1] }] : [];
+  }
+
+  return generateResolvedRoundRobin(descriptors).map((pair) => ({
+    team1: pair.team1,
+    team2: pair.team2,
+  }));
+}
+
+/**
+ * Computes group standings for one group block.
+ * @param {object} block Phase block row.
+ * @param {Array<object>} blockMatches Persisted matches belonging to the block.
+ * @param {Map<number, Array<object>>} matchSetsByMatchId Match id to persisted set rows.
+ * @param {Array<object>} resolvedSlots Ordered resolved team descriptors for the block slots.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} scoringModeKey Active scoring mode.
+ * @param {number} configuredSetCount Configured set count.
+ * @param {Map<number, object>} teamsById Teams keyed by id.
+ * @returns {Array<object>} Ranked standings rows for the group block.
+ */
+function calculateGroupStandingsForBlock(
+  block,
+  blockMatches,
+  matchSetsByMatchId,
+  resolvedSlots,
+  scoringModeKey,
+  configuredSetCount,
+  teamsById
+) {
+  const standingsByTeamId = new Map();
+  const initialOrder = new Map();
+
+  resolvedSlots.forEach((descriptor, index) => {
+    const teamId = Number(descriptor?.id);
+    if (!Number.isInteger(teamId) || teamId <= 0) {
+      return;
+    }
+    initialOrder.set(teamId, index);
+    standingsByTeamId.set(teamId, {
+      team_id: teamId,
+      team_name: teamsById.get(teamId)?.name || normalizeString(descriptor?.name) || `Team ${teamId}`,
+      ranking_points: 0,
+      sets_won: 0,
+      sets_drawn: 0,
+      sets_lost: 0,
+      set_diff: 0,
+      points_scored: 0,
+      points_allowed: 0,
+      point_diff: 0,
+      matches_played: 0,
+      sort_seed: index,
+      head_to_head_points: 0,
+    });
+  });
+
+  (Array.isArray(blockMatches) ? blockMatches : []).forEach((match) => {
+    const team1Id = Number(match.team1_id);
+    const team2Id = Number(match.team2_id);
+    if (!standingsByTeamId.has(team1Id) || !standingsByTeamId.has(team2Id)) {
+      return;
+    }
+
+    const team1Stats = standingsByTeamId.get(team1Id);
+    const team2Stats = standingsByTeamId.get(team2Id);
+    const setStats = aggregateFinishedSetStats(matchSetsByMatchId.get(Number(match.id)) || []);
+
+    if (setStats.finishedSetCount === 0) {
+      return;
+    }
+
+    team1Stats.matches_played += 1;
+    team2Stats.matches_played += 1;
+
+    team1Stats.sets_won += setStats.team1Wins;
+    team1Stats.sets_drawn += setStats.team1Draws;
+    team1Stats.sets_lost += setStats.team2Wins;
+    team2Stats.sets_won += setStats.team2Wins;
+    team2Stats.sets_drawn += setStats.team2Draws;
+    team2Stats.sets_lost += setStats.team1Wins;
+
+    team1Stats.points_scored += setStats.team1Points;
+    team1Stats.points_allowed += setStats.team2Points;
+    team2Stats.points_scored += setStats.team2Points;
+    team2Stats.points_allowed += setStats.team1Points;
+
+    const rankingPoints = scoringModeKey === "offizieller_modus"
+      ? calculateOfficialGroupMatchPoints(setStats, configuredSetCount)
+      : calculateSimplifiedGroupMatchPoints(setStats);
+
+    team1Stats.ranking_points += rankingPoints.team1MatchPoints;
+    team2Stats.ranking_points += rankingPoints.team2MatchPoints;
+  });
+
+  standingsByTeamId.forEach((entry) => {
+    entry.set_diff = entry.sets_won - entry.sets_lost;
+    entry.point_diff = entry.points_scored - entry.points_allowed;
+  });
+
+  const standings = [...standingsByTeamId.values()];
+  const tieGroups = new Map();
+
+  standings.forEach((entry) => {
+    const key = `${entry.ranking_points}:${entry.set_diff}`;
+    if (!tieGroups.has(key)) {
+      tieGroups.set(key, []);
+    }
+    tieGroups.get(key).push(entry.team_id);
+  });
+
+  tieGroups.forEach((teamIds) => {
+    if (teamIds.length < 2) {
+      return;
+    }
+
+    const tieSet = new Set(teamIds);
+    const headToHead = new Map(teamIds.map((teamId) => [teamId, 0]));
+    (Array.isArray(blockMatches) ? blockMatches : []).forEach((match) => {
+      const team1Id = Number(match.team1_id);
+      const team2Id = Number(match.team2_id);
+      if (!tieSet.has(team1Id) || !tieSet.has(team2Id)) {
+        return;
+      }
+
+      const setStats = aggregateFinishedSetStats(matchSetsByMatchId.get(Number(match.id)) || []);
+      if (setStats.finishedSetCount === 0) {
+        return;
+      }
+
+      const rankingPoints = scoringModeKey === "offizieller_modus"
+        ? calculateOfficialGroupMatchPoints(setStats, configuredSetCount)
+        : calculateSimplifiedGroupMatchPoints(setStats);
+      headToHead.set(team1Id, (headToHead.get(team1Id) || 0) + rankingPoints.team1MatchPoints);
+      headToHead.set(team2Id, (headToHead.get(team2Id) || 0) + rankingPoints.team2MatchPoints);
+    });
+
+    teamIds.forEach((teamId) => {
+      const standing = standingsByTeamId.get(teamId);
+      if (standing) {
+        standing.head_to_head_points = headToHead.get(teamId) || 0;
+      }
+    });
+  });
+
+  standings.sort((left, right) => {
+    if (right.ranking_points !== left.ranking_points) {
+      return right.ranking_points - left.ranking_points;
+    }
+    if (right.set_diff !== left.set_diff) {
+      return right.set_diff - left.set_diff;
+    }
+    if (right.head_to_head_points !== left.head_to_head_points) {
+      return right.head_to_head_points - left.head_to_head_points;
+    }
+    if (right.point_diff !== left.point_diff) {
+      return right.point_diff - left.point_diff;
+    }
+    return (initialOrder.get(left.team_id) || 0) - (initialOrder.get(right.team_id) || 0);
+  });
+
+  return standings.map((entry, index) => ({
+    ...entry,
+    rank: index + 1,
+    block_id: Number(block?.id) || null,
+    block_name: getPhaseBlockDisplayName(block),
+  }));
+}
+
+/**
+ * Loads all phase blocks keyed by phase id.
+ * @returns {Promise<{phases: Array<object>, blocksByPhaseId: Map<number, Array<object>>, blockById: Map<number, object>}>} Ordered phases and block maps.
+ */
+async function loadAllPhaseBlocksState() {
+  const phases = await all("SELECT id, name, position FROM phases ORDER BY position ASC, id ASC");
+  const blocksByPhaseId = new Map();
+  const blockById = new Map();
+
+  for (const phase of phases) {
+    const blocks = await loadPhaseBlocksWithSlots(Number(phase.id));
+    blocksByPhaseId.set(Number(phase.id), blocks);
+    blocks.forEach((block) => {
+      blockById.set(Number(block.id), block);
+    });
+  }
+
+  return {
+    phases,
+    blocksByPhaseId,
+    blockById,
+  };
+}
+
+/**
+ * Returns whether a match block feeds future match-winner or match-loser references.
+ * @param {number|null} blockId Source block id.
+ * @returns {Promise<boolean>} True when future slots depend on a clear match result.
+ */
+async function blockHasOutcomeReferenceConsumers(blockId) {
+  const normalizedBlockId = Number(blockId);
+  if (!Number.isInteger(normalizedBlockId) || normalizedBlockId <= 0) {
+    return false;
+  }
+
+  const row = await get(
+    "SELECT 1 FROM phase_block_slots WHERE entry_value IN (?, ?) LIMIT 1",
+    [`match-winner:${normalizedBlockId}`, `match-loser:${normalizedBlockId}`]
+  );
+  return Boolean(row);
+}
+
+/**
+ * Re-evaluates dependent match participants and derived group standings after a result change.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} scoringModeKey Active scoring mode.
+ * @param {number} configuredSetCount Configured set count.
+ * @returns {Promise<Map<number, Array<object>>>} Calculated group standings by block id.
+ */
+async function recomputeDerivedMatchState(scoringModeKey, configuredSetCount) {
+  const teams = await all("SELECT id, name FROM teams ORDER BY position ASC, id ASC");
+  const teamsByName = createTeamsByNameMap(teams);
+  const teamsById = createTeamsByIdMap(teams);
+  const phaseState = await loadAllPhaseBlocksState();
+  const matches = await all(
+    `SELECT m.*, p.position AS phase_position
+     FROM matches m
+     LEFT JOIN phases p ON p.id = m.phase_id
+     ORDER BY COALESCE(p.position, 0) ASC, m.position ASC, m.id ASC`
+  );
+  const matchIds = matches.map((match) => Number(match.id)).filter((id) => Number.isInteger(id) && id > 0);
+  const matchSetsByMatchId = new Map();
+
+  if (matchIds.length > 0) {
+    const placeholders = matchIds.map(() => "?").join(",");
+    const setRows = await all(
+      `SELECT * FROM match_sets WHERE match_id IN (${placeholders}) ORDER BY match_id ASC, set_index ASC, id ASC`,
+      matchIds
+    );
+    setRows.forEach((setRow) => {
+      const matchId = Number(setRow.match_id);
+      if (!matchSetsByMatchId.has(matchId)) {
+        matchSetsByMatchId.set(matchId, []);
+      }
+      matchSetsByMatchId.get(matchId).push(setRow);
+    });
+  }
+
+  const matchesByBlockId = new Map();
+  const firstMatchByBlockId = new Map();
+  matches.forEach((match) => {
+    const blockId = Number(match.block_id);
+    if (!Number.isInteger(blockId) || blockId <= 0) {
+      return;
+    }
+    if (!matchesByBlockId.has(blockId)) {
+      matchesByBlockId.set(blockId, []);
+    }
+    matchesByBlockId.get(blockId).push(match);
+  });
+  matchesByBlockId.forEach((blockMatches) => {
+    blockMatches.sort((left, right) => Number(left.position) - Number(right.position) || Number(left.id) - Number(right.id));
+    if (blockMatches.length > 0) {
+      firstMatchByBlockId.set(Number(blockMatches[0].block_id), blockMatches[0]);
+    }
+  });
+
+  const standingsByBlockId = new Map();
+  const completedGroupBlockIds = new Set();
+
+  for (const phase of phaseState.phases) {
+    const blocks = phaseState.blocksByPhaseId.get(Number(phase.id)) || [];
+    for (const block of blocks) {
+      const context = {
+        teamsByName,
+        teamsById,
+        blockById: phaseState.blockById,
+        standingsByBlockId,
+        firstMatchByBlockId,
+        completedGroupBlockIds,
+      };
+      const orderedSlots = [...(Array.isArray(block.slots) ? block.slots : [])].sort(
+        (left, right) => Number(left.slot_index) - Number(right.slot_index)
+      );
+      const resolvedSlots = orderedSlots.map((slot) => resolveBlockSlotDescriptor(slot, context));
+      const expectedPairs = buildExpectedBlockPairs(block, context);
+      const blockMatches = matchesByBlockId.get(Number(block.id)) || [];
+
+      for (let index = 0; index < blockMatches.length; index += 1) {
+        const match = blockMatches[index];
+        const expectedPair = expectedPairs[index] || { team1: null, team2: null };
+        const nextTeam1 = descriptorToMatchFields(expectedPair.team1);
+        const nextTeam2 = descriptorToMatchFields(expectedPair.team2);
+        const currentTeam1Id = Number(match.team1_id);
+        const currentTeam2Id = Number(match.team2_id);
+        const currentTeam1Ref = normalizeString(match.team1_ref) || null;
+        const currentTeam2Ref = normalizeString(match.team2_ref) || null;
+
+        const participantChanged =
+          (Number.isInteger(currentTeam1Id) && currentTeam1Id > 0 ? currentTeam1Id : null) !== nextTeam1.teamId ||
+          (Number.isInteger(currentTeam2Id) && currentTeam2Id > 0 ? currentTeam2Id : null) !== nextTeam2.teamId ||
+          currentTeam1Ref !== nextTeam1.teamRef ||
+          currentTeam2Ref !== nextTeam2.teamRef;
+
+        if (participantChanged) {
+          await run(
+            `UPDATE matches
+             SET team1_id = ?, team2_id = ?, team1_ref = ?, team2_ref = ?,
+                 is_finished = 0, winner_id = NULL, loser_id = NULL
+             WHERE id = ?`,
+            [nextTeam1.teamId, nextTeam2.teamId, nextTeam1.teamRef, nextTeam2.teamRef, Number(match.id)]
+          );
+          await run("DELETE FROM match_sets WHERE match_id = ?", [Number(match.id)]);
+          match.team1_id = nextTeam1.teamId;
+          match.team2_id = nextTeam2.teamId;
+          match.team1_ref = nextTeam1.teamRef;
+          match.team2_ref = nextTeam2.teamRef;
+          match.is_finished = 0;
+          match.winner_id = null;
+          match.loser_id = null;
+          matchSetsByMatchId.set(Number(match.id), []);
+        }
+      }
+
+      const finishedMatches = blockMatches.filter((match) => Number(match.is_finished) > 0).length;
+      const expectedMatchCount = expectedPairs.length;
+      const isGroupBlock = normalizeString(block.block_type) === "gruppe";
+
+      if (isGroupBlock && expectedMatchCount > 0 && finishedMatches >= expectedMatchCount) {
+        completedGroupBlockIds.add(Number(block.id));
+      } else {
+        completedGroupBlockIds.delete(Number(block.id));
+      }
+
+      if (isGroupBlock) {
+        standingsByBlockId.set(
+          Number(block.id),
+          calculateGroupStandingsForBlock(
+            block,
+            blockMatches,
+            matchSetsByMatchId,
+            resolvedSlots,
+            scoringModeKey,
+            configuredSetCount,
+            teamsById
+          )
+        );
+      }
+
+      if (blockMatches.length > 0) {
+        firstMatchByBlockId.set(Number(block.id), blockMatches[0]);
+      }
+    }
+  }
+
+  return standingsByBlockId;
+}
+
+/**
+ * Builds a compact set result text from persisted set rows.
+ * @param {Array<object>} sets Persisted set rows.
+ * @returns {string} Joined set score text.
+ */
+function buildSetResultsText(sets) {
+  return (Array.isArray(sets) ? sets : [])
+    .filter(
+      (entry) =>
+        Number.isFinite(Number(entry?.team1_score)) &&
+        Number.isFinite(Number(entry?.team2_score))
+    )
+    .sort((left, right) => Number(left.set_index) - Number(right.set_index))
+    .map((entry) => `${Number(entry.team1_score)}:${Number(entry.team2_score)}`)
+    .join(" | ");
+}
+
+/**
+ * Resolves one match participant label.
+ * @param {number|null} teamId Team id from match row.
+ * @param {string|null} teamRef Team reference from match row.
+ * @param {Map<number, {id: number, name: string}>} teamsById Teams keyed by id.
+ * @returns {string} Display label for one participant.
+ */
+function resolveMatchParticipantLabel(teamId, teamRef, teamsById) {
+  const normalizedTeamId = Number(teamId);
+  if (Number.isInteger(normalizedTeamId) && normalizedTeamId > 0) {
+    return teamsById.get(normalizedTeamId)?.name || `Team #${normalizedTeamId}`;
+  }
+  return normalizeString(teamRef) || "?";
+}
+
+/**
+ * Loads a derived, read-only results snapshot for result overview pages.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} scoringModeKey Active scoring mode.
+ * @param {number} configuredSetCount Configured set count.
+ * @returns {Promise<{phases: Array<object>, standingsByBlockId: Map<number, Array<object>>, firstMatchByBlockId: Map<number, object>, teamsById: Map<number, object>}>} Derived snapshot payload.
+ */
+async function buildReadOnlyResultsSnapshot(scoringModeKey, configuredSetCount) {
+  const teams = await all("SELECT id, name FROM teams ORDER BY position ASC, id ASC");
+  const teamsByName = createTeamsByNameMap(teams);
+  const teamsById = createTeamsByIdMap(teams);
+  const phaseState = await loadAllPhaseBlocksState();
+  const matches = await all(
+    `SELECT m.*, p.position AS phase_position
+     FROM matches m
+     LEFT JOIN phases p ON p.id = m.phase_id
+     ORDER BY COALESCE(p.position, 0) ASC, m.position ASC, m.id ASC`
+  );
+
+  const matchIds = matches.map((match) => Number(match.id)).filter((id) => Number.isInteger(id) && id > 0);
+  const matchSetsByMatchId = new Map();
+  if (matchIds.length > 0) {
+    const placeholders = matchIds.map(() => "?").join(",");
+    const setRows = await all(
+      `SELECT * FROM match_sets WHERE match_id IN (${placeholders}) ORDER BY match_id ASC, set_index ASC, id ASC`,
+      matchIds
+    );
+    setRows.forEach((setRow) => {
+      const matchId = Number(setRow.match_id);
+      if (!matchSetsByMatchId.has(matchId)) {
+        matchSetsByMatchId.set(matchId, []);
+      }
+      matchSetsByMatchId.get(matchId).push(setRow);
+    });
+  }
+
+  const matchesByBlockId = new Map();
+  const firstMatchByBlockId = new Map();
+  matches.forEach((match) => {
+    const blockId = Number(match.block_id);
+    if (!Number.isInteger(blockId) || blockId <= 0) {
+      return;
+    }
+    if (!matchesByBlockId.has(blockId)) {
+      matchesByBlockId.set(blockId, []);
+    }
+    matchesByBlockId.get(blockId).push(match);
+  });
+  matchesByBlockId.forEach((blockMatches) => {
+    blockMatches.sort((left, right) => Number(left.position) - Number(right.position) || Number(left.id) - Number(right.id));
+    if (blockMatches.length > 0) {
+      firstMatchByBlockId.set(Number(blockMatches[0].block_id), blockMatches[0]);
+    }
+  });
+
+  const standingsByBlockId = new Map();
+  const completedGroupBlockIds = new Set();
+  const phases = [];
+
+  for (const phase of phaseState.phases) {
+    const phaseBlocks = phaseState.blocksByPhaseId.get(Number(phase.id)) || [];
+    const blockSummaries = [];
+
+    for (const block of phaseBlocks) {
+      const context = {
+        teamsByName,
+        teamsById,
+        blockById: phaseState.blockById,
+        standingsByBlockId,
+        firstMatchByBlockId,
+        completedGroupBlockIds,
+      };
+
+      const orderedSlots = [...(Array.isArray(block.slots) ? block.slots : [])].sort(
+        (left, right) => Number(left.slot_index) - Number(right.slot_index)
+      );
+      const resolvedSlots = orderedSlots.map((slot) => resolveBlockSlotDescriptor(slot, context));
+      const expectedPairs = buildExpectedBlockPairs(block, context);
+      const blockMatches = [...(matchesByBlockId.get(Number(block.id)) || [])];
+      blockMatches.sort((left, right) => Number(left.position) - Number(right.position) || Number(left.id) - Number(right.id));
+
+      if (normalizeString(block.block_type) === "gruppe") {
+        const standings = calculateGroupStandingsForBlock(
+          block,
+          blockMatches,
+          matchSetsByMatchId,
+          resolvedSlots,
+          scoringModeKey,
+          configuredSetCount,
+          teamsById
+        );
+        standingsByBlockId.set(Number(block.id), standings);
+      }
+
+      if (blockMatches.length > 0) {
+        firstMatchByBlockId.set(Number(block.id), blockMatches[0]);
+      }
+
+      const finishedMatches = blockMatches.filter((match) => Number(match.is_finished) > 0).length;
+      const expectedMatchCount = expectedPairs.length;
+      const isGroup = normalizeString(block.block_type) === "gruppe";
+
+      if (isGroup && expectedMatchCount > 0 && finishedMatches >= expectedMatchCount) {
+        completedGroupBlockIds.add(Number(block.id));
+      } else {
+        completedGroupBlockIds.delete(Number(block.id));
+      }
+
+      const groupRows = isGroup
+        ? (standingsByBlockId.get(Number(block.id)) || []).map((row) => ({
+            rank: Number(row.rank),
+            team_name: row.team_name,
+            ranking_points: Number(row.ranking_points || 0),
+            sets_won: Number(row.sets_won || 0),
+            sets_drawn: Number(row.sets_drawn || 0),
+            sets_lost: Number(row.sets_lost || 0),
+            points_scored: Number(row.points_scored || 0),
+            points_allowed: Number(row.points_allowed || 0),
+            set_diff: Number(row.set_diff || 0),
+            point_diff: Number(row.point_diff || 0),
+            matches_played: Number(row.matches_played || 0),
+          }))
+        : [];
+
+      const matchRows = blockMatches.map((match) => {
+        const sets = matchSetsByMatchId.get(Number(match.id)) || [];
+        return {
+          id: Number(match.id),
+          start_time: normalizeString(match.start_time),
+          field_number: Number(match.field_number || 0),
+          team1_label: resolveMatchParticipantLabel(match.team1_id, match.team1_ref, teamsById),
+          team2_label: resolveMatchParticipantLabel(match.team2_id, match.team2_ref, teamsById),
+          winner_label:
+            Number.isInteger(Number(match.winner_id)) && Number(match.winner_id) > 0
+              ? (teamsById.get(Number(match.winner_id))?.name || `Team #${Number(match.winner_id)}`)
+              : "",
+          is_finished: Number(match.is_finished) > 0,
+          set_results_text: buildSetResultsText(sets),
+        };
+      });
+
+      blockSummaries.push({
+        block_id: Number(block.id),
+        block_name: getPhaseBlockDisplayName(block),
+        block_type: normalizeString(block.block_type),
+        expected_match_count: expectedMatchCount,
+        finished_match_count: finishedMatches,
+        is_completed: expectedMatchCount > 0 && finishedMatches >= expectedMatchCount,
+        groups: groupRows,
+        matches: matchRows,
+      });
+    }
+
+    phases.push({
+      phase_id: Number(phase.id),
+      phase_name: normalizeString(phase.name),
+      blocks: blockSummaries,
+    });
+  }
+
+  return {
+    phases,
+    standingsByBlockId,
+    firstMatchByBlockId,
+    teamsById,
+    completedGroupBlockIds,
+  };
+}
+
+/**
+ * Resolves one configured placement entry to a display label.
+ * @param {object} entry Placement entry row.
+ * @param {{standingsByBlockId: Map<number, Array<object>>, firstMatchByBlockId: Map<number, object>, teamsById: Map<number, object>, completedGroupBlockIds?: Set<number>}} context Derived resolution context.
+ * @returns {string} Resolved placement label.
+ */
+function resolvePlacementEntryLabel(entry, context) {
+  const entryType = normalizeString(entry?.entry_type);
+  if (entryType === "team") {
+    return normalizeString(entry?.entry_team_name) || "-";
+  }
+
+  if (entryType === "group_rank") {
+    const blockId = Number(entry?.entry_source_id);
+    const rank = Number(entry?.entry_group_position);
+    if (!(context.completedGroupBlockIds instanceof Set && context.completedGroupBlockIds.has(blockId))) {
+      return "-";
+    }
+    const standings = context.standingsByBlockId.get(blockId) || [];
+    const team = standings.find((row) => Number(row.rank) === rank);
+    return team?.team_name || "-";
+  }
+
+  if (entryType === "match_winner") {
+    const blockId = Number(entry?.entry_source_id);
+    const sourceMatch = context.firstMatchByBlockId.get(blockId);
+    const winnerId = Number(sourceMatch?.winner_id);
+    return Number.isInteger(winnerId) && winnerId > 0
+      ? (context.teamsById.get(winnerId)?.name || `Team #${winnerId}`)
+      : "-";
+  }
+
+  if (entryType === "match_loser") {
+    const blockId = Number(entry?.entry_source_id);
+    const sourceMatch = context.firstMatchByBlockId.get(blockId);
+    const loserId = Number(sourceMatch?.loser_id);
+    return Number.isInteger(loserId) && loserId > 0
+      ? (context.teamsById.get(loserId)?.name || `Team #${loserId}`)
+      : "-";
+  }
+
+  return "-";
+}
+
+/**
+ * Loads resolved overall placement rows for the current team count.
+ * @param {{standingsByBlockId: Map<number, Array<object>>, firstMatchByBlockId: Map<number, object>, teamsById: Map<number, object>, completedGroupBlockIds?: Set<number>}} context Derived resolution context.
+ * @returns {Promise<Array<object>>} Resolved placement rows.
+ */
+async function loadResolvedOverallPlacements(context) {
+  const teamCountRow = await get("SELECT COUNT(*) AS total FROM teams WHERE available_as_team = 1");
+  const activeTeamCount = Math.max(0, Number(teamCountRow?.total || 0));
+  const placements = await loadPlacementsWithEntries();
+  if (!Array.isArray(placements) || placements.length === 0) {
+    return [];
+  }
+
+  const preferred = placements.filter((placement) => Number(placement.team_count) === activeTeamCount);
+  const sourcePlacements = preferred.length > 0
+    ? preferred
+    : placements.filter((placement) => Number(placement.team_count) === Math.max(...placements.map((p) => Number(p.team_count) || 0)));
+
+  return sourcePlacements
+    .sort((left, right) => Number(left.position_index) - Number(right.position_index))
+    .map((placement) => {
+      const entry = Array.isArray(placement.entries) && placement.entries.length > 0 ? placement.entries[0] : null;
+      const entryType = normalizeString(entry?.entry_type);
+      return {
+        position_label: normalizeString(placement.position_label) || `Platz ${Number(placement.position_number || 0)}`,
+        source_type: entryType || "",
+        source_label:
+          entryType === "group_rank"
+            ? `${normalizeString(entry?.entry_group_name) || "Gruppe"} Platz ${Number(entry?.entry_group_position) || "?"}`
+            : entryType === "match_winner"
+              ? `${normalizeString(entry?.entry_match_name) || "Match"} Gewinner`
+              : entryType === "match_loser"
+                ? `${normalizeString(entry?.entry_match_name) || "Match"} Verlierer`
+                : entryType === "team"
+                  ? "Direktes Team"
+                  : "",
+        resolved_team: resolvePlacementEntryLabel(entry, context),
+      };
+    });
 }
 
 /**
@@ -1587,6 +2511,33 @@ app.get("/api/matches", async (req, res) => {
 });
 
 /**
+ * Returns an aggregated tournament results overview by phase.
+ * Includes group standings, match results and resolved overall placements.
+ * @returns {Promise<void>} Sends result overview payload.
+ */
+app.get("/api/results/overview", async (req, res) => {
+  try {
+    const configuredSetCount = await loadConfiguredSetCount();
+    const scoringModeKey = await loadScoringModeKey();
+    const snapshot = await buildReadOnlyResultsSnapshot(scoringModeKey, configuredSetCount);
+    const overallPlacements = await loadResolvedOverallPlacements({
+      standingsByBlockId: snapshot.standingsByBlockId,
+      firstMatchByBlockId: snapshot.firstMatchByBlockId,
+      teamsById: snapshot.teamsById,
+      completedGroupBlockIds: snapshot.completedGroupBlockIds,
+    });
+
+    res.json({
+      scoring_mode: scoringModeKey,
+      phases: snapshot.phases,
+      overall_placements: overallPlacements,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load tournament results overview." });
+  }
+});
+
+/**
  * Returns all persisted set rows for one match.
  * @param {number} req.params.matchId Target match id.
  * @returns {Promise<void>} Sends ordered set rows.
@@ -1632,7 +2583,7 @@ app.put("/api/matches/:matchId/sets", async (req, res) => {
 
   try {
     const matchRow = await get(
-      "SELECT id, team1_id, team2_id, entry_type FROM matches WHERE id = ?",
+      "SELECT id, phase_id, block_id, team1_id, team2_id, entry_type FROM matches WHERE id = ?",
       [matchId]
     );
     if (!matchRow) {
@@ -1643,6 +2594,10 @@ app.put("/api/matches/:matchId/sets", async (req, res) => {
       res.status(400).json({ error: "Pause entries do not support set results." });
       return;
     }
+
+    const configuredSetCount = await loadConfiguredSetCount();
+    const scoringModeKey = await loadScoringModeKey();
+    const allowDrawOutcome = !(await blockHasOutcomeReferenceConsumers(matchRow.block_id));
 
     await run("BEGIN TRANSACTION");
 
@@ -1681,18 +2636,31 @@ app.put("/api/matches/:matchId/sets", async (req, res) => {
       "SELECT * FROM match_sets WHERE match_id = ? ORDER BY set_index ASC, id ASC",
       [matchId]
     );
-    const configuredSetCount = await loadConfiguredSetCount();
     const outcome = calculateMatchOutcomeFromSets(
       persistedSets,
       Number(matchRow.team1_id),
       Number(matchRow.team2_id),
-      configuredSetCount
+      configuredSetCount,
+      scoringModeKey,
+      { allowDrawOutcome }
     );
+
+    if (outcome.error) {
+      try {
+        await run("ROLLBACK");
+      } catch (_) {
+        // Ignore rollback errors.
+      }
+      res.status(400).json({ error: outcome.error });
+      return;
+    }
 
     await run(
       "UPDATE matches SET is_finished = ?, winner_id = ?, loser_id = ? WHERE id = ?",
       [outcome.isFinished, outcome.winnerId, outcome.loserId, matchId]
     );
+
+    await recomputeDerivedMatchState(scoringModeKey, configuredSetCount);
 
     await run("COMMIT");
     res.json({
@@ -1728,9 +2696,13 @@ app.delete("/api/matches/:matchId/sets", async (req, res) => {
       return;
     }
 
+    const configuredSetCount = await loadConfiguredSetCount();
+    const scoringModeKey = await loadScoringModeKey();
+
     await run("BEGIN TRANSACTION");
     await run("DELETE FROM match_sets WHERE match_id = ?", [matchId]);
     await run("UPDATE matches SET is_finished = 0, winner_id = NULL, loser_id = NULL WHERE id = ?", [matchId]);
+    await recomputeDerivedMatchState(scoringModeKey, configuredSetCount);
     await run("COMMIT");
     res.json({ ok: true });
   } catch (error) {

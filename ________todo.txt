@@ -8,13 +8,13 @@ OK -> liste aller spiele erzeugen
 OK -> turnierphase starten und planung sperren
 OK -> phase zurücksetzen umsetzen (löschen der ergebnisse)
 OK -> dort ergebnisse eintragen lassen, löschen, editieren, sätze in DB anlegen und löschen
-
-verschiedene Tabellenberechnung definieren, Hinweise einblenden
-
-
-ergebnisse jederzeit bei standeingabe aktualisieren
+ok -> verschiedene Tabellenberechnung definieren, Hinweise einblenden
+ok -> ergebnisse jederzeit bei standeingabe aktualisieren
     ergebnisse aktualisieren lassen bei eintrag der spiele, ebenso platzierungsübersicht
-bei lsöchen und bearbeiten abhängigkeiten nach vorn und hinten updaten, sofern alle Ergebnisse vorliegen
+ok -> keine fragezeichen in "alle matches"
+ok -> bei löschen und bearbeiten abhängigkeiten nach vorn und hinten updaten, sofern alle Ergebnisse vorliegen
+
+
 nach Phasenende neue phase starten
 
 pause einplanen bei gestarter Phase
