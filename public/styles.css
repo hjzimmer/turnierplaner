@@ -1326,6 +1326,27 @@ body {
   cursor: not-allowed;
 }
 
+.tm-next-phase-btn {
+  border: 0;
+  border-radius: 10px;
+  min-height: 38px;
+  padding: 0.45rem 0.9rem;
+  background: #1d6ff0;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tm-next-phase-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.tm-next-phase-btn:disabled {
+  background: #b8cce9;
+  cursor: not-allowed;
+}
+
 .tm-helper-fill-btn {
   border: 1px solid #b8c8dc;
   border-radius: 10px;
@@ -1507,6 +1528,76 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
   filter: none;
+}
+
+.tm-ref-overview {
+  margin-top: 0.85rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdff;
+}
+
+.tm-ref-overview-title {
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.tm-ref-overview-hint {
+  margin: 0.28rem 0 0.62rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.tm-ref-overview-table-wrap {
+  overflow-x: auto;
+}
+
+.tm-ref-overview-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+}
+
+.tm-ref-overview-table th,
+.tm-ref-overview-table td {
+  padding: 0.42rem 0.48rem;
+  border-bottom: 1px solid #e4eaf2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tm-ref-overview-table thead th {
+  background: #f4f8fc;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.tm-ref-overview-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tm-ref-delta.is-above {
+  color: #9a3412;
+  font-weight: 700;
+}
+
+.tm-ref-delta.is-below {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.tm-ref-delta.is-even {
+  color: #475467;
+  font-weight: 700;
+}
+
+.tm-ref-conflicts.has-conflict {
+  color: #b42318;
+  font-weight: 700;
 }
 
 /* ===== Match Result Dialog ===== */

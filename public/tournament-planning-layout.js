@@ -652,7 +652,7 @@ function resolveTeamLabel(teamId, teamRef, teamNameById) {
 /**
  * Mounts the tabular tournament matches layout into the given container.
  * @param {HTMLElement} mount Container element to mount into.
- * @returns {{ tableArea: HTMLElement, phaseToggleButton: HTMLButtonElement, phaseToggleHint: HTMLElement, helperFillButton: HTMLButtonElement }} References to key UI nodes.
+ * @returns {{ tableArea: HTMLElement, phaseToggleButton: HTMLButtonElement, nextPhaseStartButton: HTMLButtonElement, phaseToggleHint: HTMLElement, helperFillButton: HTMLButtonElement }} References to key UI nodes.
  */
 export function mountTournamentMatchesLayout(mount) {
   mount.innerHTML = "";
@@ -667,7 +667,15 @@ export function mountTournamentMatchesLayout(mount) {
   phaseToggleButton.type = "button";
   phaseToggleButton.className = "tm-phase-toggle-btn";
   phaseToggleButton.dataset.mode = "start";
-  phaseToggleButton.textContent = "Start";
+  phaseToggleButton.textContent = "▶ Start";
+
+  const nextPhaseStartButton = document.createElement("button");
+  nextPhaseStartButton.type = "button";
+  nextPhaseStartButton.className = "tm-next-phase-btn";
+  nextPhaseStartButton.dataset.action = "start-next-phase";
+  nextPhaseStartButton.textContent = "▶ Folgephase starten";
+  nextPhaseStartButton.hidden = true;
+  nextPhaseStartButton.disabled = true;
 
   const phaseToggleHint = document.createElement("span");
   phaseToggleHint.className = "tm-phase-toggle-hint";
@@ -679,6 +687,7 @@ export function mountTournamentMatchesLayout(mount) {
   helperFillButton.textContent = "Temp: Zufalls-Ergebnisse fuellen";
 
   controls.appendChild(phaseToggleButton);
+  controls.appendChild(nextPhaseStartButton);
   controls.appendChild(helperFillButton);
   controls.appendChild(phaseToggleHint);
 
@@ -694,51 +703,66 @@ export function mountTournamentMatchesLayout(mount) {
   card.appendChild(tableArea);
   mount.appendChild(card);
 
-  return { tableArea, phaseToggleButton, phaseToggleHint, helperFillButton };
+  return { tableArea, phaseToggleButton, nextPhaseStartButton, phaseToggleHint, helperFillButton };
 }
 
 /**
  * Renders the phase start/reset control above the match table.
  * @param {HTMLButtonElement} phaseToggleButton Toggle button.
+ * @param {HTMLButtonElement} nextPhaseStartButton Follow-up phase start button.
  * @param {HTMLElement} phaseToggleHint Inline hint label.
- * @param {{mode: "start"|"reset"|"done", phaseName: string, hasMatches: boolean}} state Control state.
+ * @param {{mode: "start"|"reset"|"done", phaseName: string, hasMatches: boolean, buttonText?: string, hintText?: string, showNextPhaseButton?: boolean, nextPhaseButtonText?: string, nextPhaseId?: number|null}} state Control state.
  * @returns {void}
  */
-export function renderTournamentMatchesPhaseControl(phaseToggleButton, phaseToggleHint, state) {
+export function renderTournamentMatchesPhaseControl(phaseToggleButton, nextPhaseStartButton, phaseToggleHint, state) {
   const mode = String(state?.mode || "done");
   const phaseName = String(state?.phaseName || "");
   const hasMatches = Boolean(state?.hasMatches);
+  const customButtonText = String(state?.buttonText || "").trim();
+  const customHintText = String(state?.hintText || "").trim();
+  const showNextPhaseButton = Boolean(state?.showNextPhaseButton);
+  const nextPhaseButtonText = String(state?.nextPhaseButtonText || "").trim();
+  const nextPhaseId = Number(state?.nextPhaseId);
 
   phaseToggleButton.dataset.mode = mode;
+  nextPhaseStartButton.hidden = !showNextPhaseButton;
+  nextPhaseStartButton.disabled = !showNextPhaseButton;
+  nextPhaseStartButton.dataset.phaseId = Number.isInteger(nextPhaseId) && nextPhaseId > 0
+    ? String(nextPhaseId)
+    : "";
+  if (showNextPhaseButton) {
+    nextPhaseStartButton.textContent = nextPhaseButtonText || "▶ Folgephase starten";
+  }
 
   if (!hasMatches || mode === "done") {
-    phaseToggleButton.textContent = "Alle Phasen gestartet";
+    phaseToggleButton.textContent = customButtonText || "Alle Phasen gestartet";
     phaseToggleButton.disabled = true;
-    phaseToggleHint.textContent = hasMatches
+    phaseToggleHint.textContent = customHintText || (hasMatches
       ? "Es sind keine weiteren Phasen zum Starten vorhanden."
-      : "Es sind noch keine Matches vorhanden.";
+      : "Es sind noch keine Matches vorhanden.");
     return;
   }
 
   if (mode === "start") {
-    phaseToggleButton.textContent = `Start Phase ${phaseName}`;
+    phaseToggleButton.textContent = customButtonText || `▶ ${phaseName} starten`;
     phaseToggleButton.disabled = false;
-    phaseToggleHint.textContent = "Spielaktionen bleiben gesperrt, bis die Phase gestartet wurde.";
+    phaseToggleHint.textContent = customHintText || "Spielaktionen bleiben gesperrt, bis die Phase gestartet wurde.";
     return;
   }
 
-  phaseToggleButton.textContent = `Phase ${phaseName} zuruecksetzen`;
+  phaseToggleButton.textContent = customButtonText || `⏹ ${phaseName} stoppen`;
   phaseToggleButton.disabled = false;
-  phaseToggleHint.textContent = "Zuruecksetzen ist vorbereitet und wird im naechsten Schritt implementiert.";
+  phaseToggleHint.textContent = customHintText || "Zuruecksetzen ist vorbereitet und wird im naechsten Schritt implementiert.";
 }
 
 /**
  * Renders the tabular all-matches page.
  * @param {HTMLElement} tableArea Target table container.
  * @param {Array<object>} rows Prepared row view-model entries.
+ * @param {{title?: string, averageLabel?: string, averageAssignments?: number, rows?: Array<{teamName: string, assignments: number, target: number, delta: number, conflicts: number}>}} [refereeOverview] Optional temporary overview shown below the match table.
  * @returns {void}
  */
-export function renderTournamentMatchesTable(tableArea, rows) {
+export function renderTournamentMatchesTable(tableArea, rows, refereeOverview = null) {
   tableArea.innerHTML = "";
 
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -850,6 +874,67 @@ export function renderTournamentMatchesTable(tableArea, rows) {
   table.appendChild(tbody);
   tableWrap.appendChild(table);
   tableArea.appendChild(tableWrap);
+
+  const overviewRows = Array.isArray(refereeOverview?.rows) ? refereeOverview.rows : [];
+  if (overviewRows.length === 0) {
+    return;
+  }
+
+  const overviewWrap = document.createElement("section");
+  overviewWrap.className = "tm-ref-overview";
+
+  const overviewTitle = document.createElement("h3");
+  overviewTitle.className = "tm-ref-overview-title";
+  overviewTitle.textContent = String(refereeOverview?.title || "Temporaere Schiedsrichter-Uebersicht");
+  overviewWrap.appendChild(overviewTitle);
+
+  const averageLabel = String(refereeOverview?.averageLabel || "Soll je Team");
+  const averageAssignments = Number(refereeOverview?.averageAssignments);
+  const averageText = Number.isFinite(averageAssignments) ? averageAssignments.toFixed(2) : "0.00";
+  const overviewHint = document.createElement("p");
+  overviewHint.className = "tm-ref-overview-hint";
+  overviewHint.textContent = `${averageLabel}: ${averageText}`;
+  overviewWrap.appendChild(overviewHint);
+
+  const overviewTableWrap = document.createElement("div");
+  overviewTableWrap.className = "tm-ref-overview-table-wrap";
+
+  const overviewTable = document.createElement("table");
+  overviewTable.className = "tm-ref-overview-table";
+  overviewTable.innerHTML = `
+    <thead>
+      <tr>
+        <th>Team</th>
+        <th>Einsaetze</th>
+        <th>Soll</th>
+        <th>Abweichung</th>
+        <th>Konflikte</th>
+      </tr>
+    </thead>
+  `;
+
+  const overviewBody = document.createElement("tbody");
+  overviewRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    const delta = Number(row.delta);
+    const deltaClass = delta > 0.01 ? "is-above" : delta < -0.01 ? "is-below" : "is-even";
+    const conflicts = Math.max(0, Number(row.conflicts) || 0);
+
+    tr.innerHTML = `
+      <td>${escapeHtml(String(row.teamName || ""))}</td>
+      <td>${Math.max(0, Number(row.assignments) || 0)}</td>
+      <td>${Number(row.target || 0).toFixed(2)}</td>
+      <td><span class="tm-ref-delta ${deltaClass}">${delta >= 0 ? "+" : ""}${delta.toFixed(2)}</span></td>
+      <td><span class="tm-ref-conflicts ${conflicts > 0 ? "has-conflict" : ""}">${conflicts}</span></td>
+    `;
+
+    overviewBody.appendChild(tr);
+  });
+
+  overviewTable.appendChild(overviewBody);
+  overviewTableWrap.appendChild(overviewTable);
+  overviewWrap.appendChild(overviewTableWrap);
+  tableArea.appendChild(overviewWrap);
 }
 
 /**

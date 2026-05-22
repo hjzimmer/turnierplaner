@@ -894,6 +894,64 @@ function getNextNotStartedPhaseId(plannedPhaseIds) {
 }
 
 /**
+ * Starts a phase for result entry and marks it active.
+ * @param {number|null} phaseId Phase id to start.
+ * @returns {Promise<boolean>} True when start was applied.
+ */
+async function startPhaseForResults(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  if (!Number.isInteger(numericPhaseId) || numericPhaseId <= 0) {
+    return false;
+  }
+
+  const refereeCheck = await ensurePhaseRefereesBeforeStart(numericPhaseId);
+  if (!refereeCheck.ok) {
+    if (refereeCheck.reason === "missing-referee-pool") {
+      window.alert("Phase kann nicht gestartet werden: Keine Teams als Schiedsrichter markiert.");
+    } else if (refereeCheck.reason === "persist-failed") {
+      window.alert("Phase kann nicht gestartet werden: Schiedsrichterzuweisungen konnten nicht gespeichert werden.");
+    }
+    return false;
+  }
+
+  startedMatchPhaseIds.add(numericPhaseId);
+  activeStartedMatchPhaseId = numericPhaseId;
+  await persistStartedMatchPhaseState();
+  renderAllMatchGrid();
+
+  if (refereeCheck.unassignedCount > 0) {
+    window.alert(
+      `Hinweis: In ${refereeCheck.unassignedCount} Spiel(en) der gestarteten Phase konnte kein Schiedsrichter zugewiesen werden.`
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Returns whether all non-pause matches of a phase are completed.
+ * @param {number|null} phaseId Phase id to evaluate.
+ * @returns {boolean} True when every real match in the phase is finished.
+ */
+function isPhaseCompleted(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  if (!Number.isInteger(numericPhaseId) || numericPhaseId <= 0) {
+    return false;
+  }
+
+  const phaseMatches = persistedMatches.filter(
+    (match) =>
+      Number(match.phase_id) === numericPhaseId &&
+      String(match.entry_type || "match") !== "pause"
+  );
+  if (phaseMatches.length === 0) {
+    return false;
+  }
+
+  return phaseMatches.every((match) => Number(match.is_finished) > 0);
+}
+
+/**
  * Returns display name for a phase id.
  * @param {number|null} phaseId Phase id.
  * @returns {string} Display name.
@@ -906,6 +964,24 @@ function getPhaseDisplayName(phaseId) {
     return trimmedPhaseName.replace(/^phase\s+/i, "").trim();
   }
   return String(numericPhaseId);
+}
+
+/**
+ * Returns whether result actions are allowed for the given phase.
+ * Only the currently active started phase can be edited.
+ * @param {number|null} phaseId Phase id to check.
+ * @returns {boolean} True when result actions are allowed.
+ */
+function canEditPhaseResults(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  const activePhaseId = Number(activeStartedMatchPhaseId);
+  return (
+    Number.isInteger(numericPhaseId) &&
+    numericPhaseId > 0 &&
+    Number.isInteger(activePhaseId) &&
+    activePhaseId > 0 &&
+    numericPhaseId === activePhaseId
+  );
 }
 
 /**
@@ -994,6 +1070,78 @@ function getRefereeOptionsForMatch(match, teamNameById) {
 }
 
 /**
+ * Builds temporary fairness overview rows for referee assignments across the tournament.
+ * @param {Map<number, string>} teamNameById Team id to display name lookup.
+ * @returns {{rows: Array<{teamName: string, assignments: number, target: number, delta: number, conflicts: number}>, averageAssignments: number}} Overview payload.
+ */
+function buildTemporaryRefereeLoadRows(teamNameById) {
+  const eligibleRefereeIds = [...getEligibleRefereeTeamIds()];
+  if (eligibleRefereeIds.length === 0) {
+    return { rows: [], averageAssignments: 0 };
+  }
+
+  const countsByTeam = new Map(eligibleRefereeIds.map((teamId) => [teamId, 0]));
+  const conflictsByTeam = new Map(eligibleRefereeIds.map((teamId) => [teamId, 0]));
+  let totalAssignments = 0;
+
+  persistedMatches.forEach((match) => {
+    if (!isRefereeAssignableMatch(match)) {
+      return;
+    }
+
+    const refereeId = Number(match.referee_id);
+    if (!countsByTeam.has(refereeId)) {
+      return;
+    }
+
+    totalAssignments += 1;
+    countsByTeam.set(refereeId, (countsByTeam.get(refereeId) || 0) + 1);
+
+    const startTime = String(match.start_time || "");
+    const sameSlotPlayingTeamIds = getPlayingTeamIdsAtTime(startTime);
+    if (sameSlotPlayingTeamIds.has(refereeId)) {
+      conflictsByTeam.set(refereeId, (conflictsByTeam.get(refereeId) || 0) + 1);
+    }
+
+    const sameSlotAssignments = persistedMatches.filter((entry) => {
+      if (!isRefereeAssignableMatch(entry)) {
+        return false;
+      }
+      if (String(entry.start_time || "") !== startTime) {
+        return false;
+      }
+      return Number(entry.referee_id) === refereeId;
+    }).length;
+    if (sameSlotAssignments > 1) {
+      conflictsByTeam.set(refereeId, (conflictsByTeam.get(refereeId) || 0) + 1);
+    }
+  });
+
+  const averageAssignments = totalAssignments / eligibleRefereeIds.length;
+  const rows = eligibleRefereeIds
+    .map((teamId) => {
+      const assignments = countsByTeam.get(teamId) || 0;
+      const conflicts = conflictsByTeam.get(teamId) || 0;
+      const delta = assignments - averageAssignments;
+      return {
+        teamName: teamNameById.get(teamId) || `Team #${teamId}`,
+        assignments,
+        target: averageAssignments,
+        delta,
+        conflicts,
+      };
+    })
+    .sort((left, right) => {
+      if (left.assignments !== right.assignments) {
+        return left.assignments - right.assignments;
+      }
+      return left.teamName.localeCompare(right.teamName, "de");
+    });
+
+  return { rows, averageAssignments };
+}
+
+/**
  * Renders the tabular all-matches page in tournament planning.
  * @returns {void}
  */
@@ -1005,21 +1153,62 @@ function renderAllTournamentMatchesTable() {
   const plannedPhaseIds = getPlannedPhaseIdsInOrder();
   syncStartedMatchPhaseState(plannedPhaseIds);
 
+  const activePhaseId = Number(activeStartedMatchPhaseId);
+  const hasActivePhase = Number.isInteger(activePhaseId) && activePhaseId > 0;
+  const activePhaseCompleted = hasActivePhase ? isPhaseCompleted(activePhaseId) : false;
   const nextPhaseId = getNextNotStartedPhaseId(plannedPhaseIds);
   const hasMatches = plannedPhaseIds.length > 0;
-  const controlMode = Number.isInteger(activeStartedMatchPhaseId)
-    ? "reset"
-    : nextPhaseId
-      ? "start"
-      : "done";
-  const controlPhaseId = Number.isInteger(activeStartedMatchPhaseId) ? activeStartedMatchPhaseId : nextPhaseId;
+
+  let controlMode = "done";
+  let controlPhaseId = null;
+  let controlHint = "";
+  let controlButtonText = "";
+  let showNextPhaseButton = false;
+  let nextPhaseButtonText = "";
+  let nextPhaseControlId = null;
+
+  if (!hasMatches) {
+    controlMode = "done";
+  } else if (hasActivePhase) {
+    if (activePhaseCompleted && Number.isInteger(nextPhaseId) && nextPhaseId > 0) {
+      controlMode = "reset";
+      controlPhaseId = activePhaseId;
+      controlButtonText = `⏹ ${getPhaseDisplayName(activePhaseId)} stoppen`;
+      controlHint = `Phase ${getPhaseDisplayName(activePhaseId)} ist abgeschlossen. Du kannst jetzt die Folgephase starten oder die aktuelle Phase noch stoppen.`;
+      showNextPhaseButton = true;
+      nextPhaseControlId = nextPhaseId;
+      nextPhaseButtonText = `▶ ${getPhaseDisplayName(nextPhaseId)} starten`;
+    } else if (activePhaseCompleted) {
+      controlMode = "reset";
+      controlPhaseId = activePhaseId;
+      controlButtonText = `⏹ ${getPhaseDisplayName(activePhaseId)} stoppen`;
+      controlHint = `Phase ${getPhaseDisplayName(activePhaseId)} ist abgeschlossen. Keine weitere Folgephase vorhanden.`;
+    } else {
+      controlMode = "reset";
+      controlPhaseId = activePhaseId;
+      controlButtonText = `⏹ ${getPhaseDisplayName(activePhaseId)} stoppen`;
+      controlHint = "Zuruecksetzen betrifft die aktuell gestartete Phase.";
+    }
+  } else if (Number.isInteger(nextPhaseId) && nextPhaseId > 0) {
+    controlMode = "start";
+    controlPhaseId = nextPhaseId;
+    controlButtonText = `▶ ${getPhaseDisplayName(nextPhaseId)} starten`;
+    controlHint = "Spielaktionen bleiben gesperrt, bis die Phase gestartet wurde.";
+  }
+
   renderTournamentMatchesPhaseControl(
     tournamentMatchesUi.phaseToggleButton,
+    tournamentMatchesUi.nextPhaseStartButton,
     tournamentMatchesUi.phaseToggleHint,
     {
       mode: controlMode,
       phaseName: controlPhaseId ? getPhaseDisplayName(controlPhaseId) : "",
       hasMatches,
+      buttonText: controlButtonText,
+      hintText: controlHint,
+      showNextPhaseButton,
+      nextPhaseButtonText,
+      nextPhaseId: nextPhaseControlId,
     }
   );
 
@@ -1114,11 +1303,18 @@ function renderAllTournamentMatchesTable() {
       setResultsText: String(match.set_results_text || "").trim(),
       canEditReferee: !isPause && isRefereeAssignableMatch(match),
       showActions: !isPause,
-      actionsEnabled: startedMatchPhaseIds.has(Number(match.phase_id)),
+      actionsEnabled: canEditPhaseResults(match.phase_id),
     };
   });
 
-  renderTournamentMatchesTable(tournamentMatchesUi.tableArea, rows);
+  const refereeOverview = buildTemporaryRefereeLoadRows(teamNameById);
+
+  renderTournamentMatchesTable(tournamentMatchesUi.tableArea, rows, {
+    title: "Temporaere Schiedsrichter-Uebersicht",
+    averageLabel: "Soll je Team",
+    averageAssignments: refereeOverview.averageAssignments,
+    rows: refereeOverview.rows,
+  });
 }
 
 /**
@@ -1764,6 +1960,15 @@ async function handleGenerateMatches() {
   const newBlockRefs = blockRefs.filter((ref) => !existingBlockIds.has(ref.blockId));
 
   if (newBlockRefs.length === 0) {
+    return;
+  }
+
+  const lockedPhaseIdsInSelection = [...new Set(newBlockRefs.map((ref) => Number(ref.phaseId)))].filter(
+    (phaseId) => isPhaseScheduleLocked(phaseId)
+  );
+  if (lockedPhaseIdsInSelection.length > 0) {
+    const lockedLabel = lockedPhaseIdsInSelection.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
+    window.alert(`Planung nicht moeglich: gestartete Phase(n) sind gesperrt (${lockedLabel}).`);
     return;
   }
 
@@ -2448,9 +2653,19 @@ async function moveMatchToSlot(matchId, targetField, targetTime) {
     return;
   }
 
+  const matchesBeforeMove = cloneMatchesForProposal(persistedMatches);
   persistedMatches = proposedMatches;
 
   const dependencyChangedPhaseIds = recalculatePhaseTimingAfterDnD();
+  const lockedShiftedPhaseIds = [...dependencyChangedPhaseIds].filter((phaseId) => isPhaseScheduleLocked(phaseId));
+  if (lockedShiftedPhaseIds.length > 0) {
+    persistedMatches = matchesBeforeMove;
+    const lockedLabel = lockedShiftedPhaseIds.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
+    window.alert(
+      `Verschieben nicht moeglich: gesperrte Phase(n) wuerden zeitlich verschoben (${lockedLabel}).`
+    );
+    return;
+  }
 
   try {
     teamsWithIds = await loadTeamsWithIds();
@@ -2518,6 +2733,15 @@ function snapToNearestSlot(requestedTime) {
 async function insertPauseSlot() {
   if (persistedMatches.length === 0) {
     window.alert("Es sind noch keine Matches geplant. Bitte zuerst Matches generieren.");
+    return;
+  }
+
+  const lockedPhaseIds = [...new Set([...startedMatchPhaseIds].map((phaseId) => Number(phaseId)))].filter(
+    (phaseId) => Number.isInteger(phaseId) && phaseId > 0
+  );
+  if (lockedPhaseIds.length > 0) {
+    const lockedLabel = lockedPhaseIds.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
+    window.alert(`Pause einfuegen nicht moeglich: gestartete Phase(n) sind gesperrt (${lockedLabel}).`);
     return;
   }
 
@@ -2642,6 +2866,15 @@ async function deletePauseSlot(pauseMatchId) {
     (match) => Number(match.id) === pauseMatchId && String(match.entry_type || "match") === "pause"
   );
   if (!pauseMatch) {
+    return;
+  }
+
+  const lockedPhaseIds = [...new Set([...startedMatchPhaseIds].map((phaseId) => Number(phaseId)))].filter(
+    (phaseId) => Number.isInteger(phaseId) && phaseId > 0
+  );
+  if (lockedPhaseIds.length > 0) {
+    const lockedLabel = lockedPhaseIds.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
+    window.alert(`Pause loeschen nicht moeglich: gestartete Phase(n) sind gesperrt (${lockedLabel}).`);
     return;
   }
 
@@ -3063,6 +3296,49 @@ function assignRefereesForPhases(phaseIds) {
 }
 
 /**
+ * Ensures referee assignments of one phase satisfy assignment rules before phase start.
+ * Rebuilds assignments for the phase, persists updates, and reports hard/soft issues.
+ * @param {number} phaseId Phase id that is about to be started.
+ * @returns {Promise<{ok: boolean, reason: "missing-referee-pool"|"persist-failed"|null, unassignedCount: number}>} Start readiness result.
+ */
+async function ensurePhaseRefereesBeforeStart(phaseId) {
+  const numericPhaseId = Number(phaseId);
+  if (!Number.isInteger(numericPhaseId) || numericPhaseId <= 0) {
+    return { ok: true, reason: null, unassignedCount: 0 };
+  }
+
+  try {
+    teamsWithIds = await loadTeamsWithIds();
+  } catch {
+    // Keep existing in-memory team map when backend read fails.
+  }
+
+  const plannableMatches = persistedMatches.filter(
+    (match) => Number(match.phase_id) === numericPhaseId && isRefereeAssignableMatch(match)
+  );
+  if (plannableMatches.length === 0) {
+    return { ok: true, reason: null, unassignedCount: 0 };
+  }
+
+  const result = assignRefereesForPhases([numericPhaseId]);
+  if (result.missingRefereePool) {
+    return { ok: false, reason: "missing-referee-pool", unassignedCount: 0 };
+  }
+
+  try {
+    await persistPhaseMatches(numericPhaseId);
+  } catch {
+    return { ok: false, reason: "persist-failed", unassignedCount: 0 };
+  }
+
+  return {
+    ok: true,
+    reason: null,
+    unassignedCount: Math.max(0, result.plannableCount - result.assignedCount),
+  };
+}
+
+/**
  * Re-validates referee assignments after DnD for all phases that already use referees.
  * @returns {{changedPhaseIds: Set<number>, assignedCount: number, plannableCount: number, missingRefereePool: boolean}} Re-assignment result.
  */
@@ -3298,6 +3574,12 @@ tournamentMatchesUi.tableArea.addEventListener("click", async (event) => {
       return;
     }
 
+    const match = persistedMatches.find((entry) => Number(entry.id) === matchId);
+    if (!match || !canEditPhaseResults(match.phase_id)) {
+      window.alert("Ergebnisse koennen nur in der aktuell gestarteten Phase geaendert werden.");
+      return;
+    }
+
     await openMatchResultDialog(matchId);
     return;
   }
@@ -3306,6 +3588,12 @@ tournamentMatchesUi.tableArea.addEventListener("click", async (event) => {
   if (deleteButton) {
     const matchId = Number(deleteButton.dataset.matchId);
     if (!Number.isInteger(matchId) || matchId <= 0) {
+      return;
+    }
+
+    const match = persistedMatches.find((entry) => Number(entry.id) === matchId);
+    if (!match || !canEditPhaseResults(match.phase_id)) {
+      window.alert("Ergebnisse koennen nur in der aktuell gestarteten Phase geloescht werden.");
       return;
     }
 
@@ -3361,10 +3649,7 @@ tournamentMatchesUi.phaseToggleButton.addEventListener("click", async () => {
       return;
     }
 
-    startedMatchPhaseIds.add(nextPhaseId);
-    activeStartedMatchPhaseId = nextPhaseId;
-    void persistStartedMatchPhaseState();
-    renderAllTournamentMatchesTable();
+    await startPhaseForResults(nextPhaseId);
     return;
   }
 
@@ -3393,6 +3678,15 @@ tournamentMatchesUi.phaseToggleButton.addEventListener("click", async () => {
       }
     }
   }
+});
+
+tournamentMatchesUi.nextPhaseStartButton.addEventListener("click", async () => {
+  const nextPhaseId = Number(tournamentMatchesUi.nextPhaseStartButton.dataset.phaseId);
+  if (!Number.isInteger(nextPhaseId) || nextPhaseId <= 0) {
+    return;
+  }
+
+  await startPhaseForResults(nextPhaseId);
 });
 
 tournamentMatchesUi.helperFillButton.addEventListener("click", async () => {
