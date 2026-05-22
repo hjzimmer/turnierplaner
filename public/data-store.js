@@ -120,3 +120,45 @@ export async function savePhases(phases) {
   const payload = await response.json();
   return normalizePhases(payload.phases || []);
 }
+
+/**
+ * Loads scoring mode selection from backend.
+ * @returns {Promise<{mode_key: "vereinfachter_turniermodus"|"offizieller_modus"}>} Persisted scoring mode state.
+ */
+export async function loadScoringMode() {
+  const response = await fetch("/api/scoring-mode");
+  if (!response.ok) {
+    throw new Error("Wertungsmodus konnte nicht geladen werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    mode_key: payload.mode_key === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus",
+  };
+}
+
+/**
+ * Persists scoring mode selection to backend.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} modeKey Selected mode key.
+ * @returns {Promise<{mode_key: "vereinfachter_turniermodus"|"offizieller_modus"}>} Persisted scoring mode state.
+ */
+export async function saveScoringMode(modeKey) {
+  const normalizedMode = modeKey === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus";
+
+  const response = await fetch("/api/scoring-mode", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode_key: normalizedMode }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Wertungsmodus konnte nicht gespeichert werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    mode_key: payload.mode_key === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus",
+  };
+}

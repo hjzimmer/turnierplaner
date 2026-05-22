@@ -316,6 +316,22 @@ async function initializeDatabase() {
   await createSetupTable();
 
   await run(`
+    CREATE TABLE IF NOT EXISTS scoring_mode_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      mode_key TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  const scoringModeRow = await get("SELECT id FROM scoring_mode_state WHERE id = 1");
+  if (!scoringModeRow) {
+    await run(
+      "INSERT INTO scoring_mode_state (id, mode_key, updated_at) VALUES (1, ?, datetime('now'))",
+      ["vereinfachter_turniermodus"]
+    );
+  }
+
+  await run(`
     CREATE TABLE IF NOT EXISTS matches (
       id INTEGER PRIMARY KEY,
       phase_id INTEGER NOT NULL,
@@ -961,6 +977,52 @@ app.put("/api/setup", async (req, res) => {
     res.json({ settings: normalizedSettings });
   } catch (error) {
     res.status(500).json({ error: "Failed to save setup." });
+  }
+});
+
+/**
+ * Normalizes scoring mode key to one of the supported options.
+ * @param {*} value Raw mode key input.
+ * @returns {"vereinfachter_turniermodus"|"offizieller_modus"} Normalized mode key.
+ */
+function normalizeScoringModeKey(value) {
+  const normalized = normalizeString(value);
+  if (normalized === "offizieller_modus") {
+    return "offizieller_modus";
+  }
+  return "vereinfachter_turniermodus";
+}
+
+/**
+ * Returns the persisted scoring mode selection.
+ * @returns {Promise<void>} Sends current scoring mode key.
+ */
+app.get("/api/scoring-mode", async (req, res) => {
+  try {
+    const row = await get("SELECT mode_key FROM scoring_mode_state WHERE id = 1");
+    res.json({
+      mode_key: normalizeScoringModeKey(row?.mode_key),
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load scoring mode." });
+  }
+});
+
+/**
+ * Persists the scoring mode selection.
+ * @param {string} req.body.mode_key Selected mode key.
+ * @returns {Promise<void>} Sends persisted scoring mode key.
+ */
+app.put("/api/scoring-mode", async (req, res) => {
+  try {
+    const modeKey = normalizeScoringModeKey(req.body?.mode_key);
+    await run(
+      "UPDATE scoring_mode_state SET mode_key = ?, updated_at = datetime('now') WHERE id = 1",
+      [modeKey]
+    );
+    res.json({ mode_key: modeKey });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save scoring mode." });
   }
 });
 

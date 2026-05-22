@@ -98,6 +98,59 @@ export function mountTournamentSettingsLayout(targetElement) {
 }
 
 /**
+ * Renders the scoring mode selection layout into a mount element.
+ * @param {HTMLElement} targetElement DOM node where the layout is inserted.
+ * @returns {{form: HTMLFormElement, saveButton: HTMLButtonElement, saveStatus: HTMLElement}} References to key scoring mode UI nodes.
+ */
+export function mountScoringModeLayout(targetElement) {
+  targetElement.innerHTML = `
+    <article class="settings-card" aria-label="Wertungsmodus">
+      <h3>Wertungsmodus</h3>
+      <p class="settings-description">
+        Der Modus steuert die Bewertung der Spielergebnisse in allen Matches.
+      </p>
+
+      <form id="scoringModeForm" class="settings-form" novalidate>
+        <section class="settings-section scoring-mode-options" aria-label="Auswahl Wertungsmodus">
+          <label class="scoring-mode-option">
+            <input type="radio" name="mode_key" value="vereinfachter_turniermodus" />
+            <div class="scoring-mode-option-content">
+              <h4>Vereinfachter Turniermodus</h4>
+              <p>
+                Fokus auf schnelle und einfache Auswertung. Ergebnisse werden kompakt erfasst
+                und direkt als Match-Ausgang gewertet.
+              </p>
+            </div>
+          </label>
+
+          <label class="scoring-mode-option">
+            <input type="radio" name="mode_key" value="offizieller_modus" />
+            <div class="scoring-mode-option-content">
+              <h4>Offizieller Modus</h4>
+              <p>
+                Vollstaendige Wettkampfwertung mit detaillierter Beruecksichtigung der Satzresultate
+                gemaess offiziellen Turnierregeln.
+              </p>
+            </div>
+          </label>
+        </section>
+
+        <footer class="settings-footer">
+          <span id="scoringModeSaveStatus" class="save-status" aria-live="polite">Keine Aenderungen</span>
+          <button id="saveScoringModeBtn" class="save-btn" type="submit" disabled>Speichern</button>
+        </footer>
+      </form>
+    </article>
+  `;
+
+  return {
+    form: targetElement.querySelector("#scoringModeForm"),
+    saveButton: targetElement.querySelector("#saveScoringModeBtn"),
+    saveStatus: targetElement.querySelector("#scoringModeSaveStatus"),
+  };
+}
+
+/**
  * Writes a numeric value into a named form control.
  * @param {HTMLFormElement} form Source form.
  * @param {string} fieldName Name of the form field.

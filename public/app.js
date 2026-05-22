@@ -9,9 +9,11 @@ import {
 } from "./calculations.js";
 import {
   loadPhases,
+  loadScoringMode,
   loadTeams,
   loadTournamentSettings,
   savePhases,
+  saveScoringMode,
   saveTeams,
   saveTournamentSettings,
 } from "./data-store.js";
@@ -19,6 +21,7 @@ import {
   addPhaseColumn,
   addTeamRow,
   mountPhaseConfigLayout,
+  mountScoringModeLayout,
   mountTeamsLayout,
   mountTournamentSettingsLayout,
   readPhasesFromColumns,
@@ -77,6 +80,7 @@ const sections = [...document.querySelectorAll(".content-section")];
 const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
+const scoringModeMount = document.getElementById("scoringModeMount");
 const placementsMount = document.getElementById("placementsMount");
 const tournamentPlanningMount = document.getElementById("tournamentPlanningMount");
 const tournamentMatchesMount = document.getElementById("tournamentMatchesMount");
@@ -86,6 +90,7 @@ const mobileQuery = window.matchMedia("(max-width: 880px)");
 const settingsUi = mountTournamentSettingsLayout(settingsMount);
 const teamsUi = mountTeamsLayout(teamsMount);
 const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
+const scoringModeUi = mountScoringModeLayout(scoringModeMount);
 const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
 const tournamentMatchesUi = mountTournamentMatchesLayout(tournamentMatchesMount);
 let teamsWithIds = [];
@@ -104,6 +109,7 @@ let activeStartedMatchPhaseId = null;
 let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
 let activeMatchResultDialog = null;
+let persistedScoringModeKey = "vereinfachter_turniermodus";
 
 /**
  * Returns current started-phase state payload for persistence.
@@ -279,6 +285,62 @@ async function initializeTournamentSettings() {
     writeTournamentSettingsToForm(settingsUi.form, persistedSettings);
     setSaveStatus(settingsUi.saveStatus, "Standardwerte geladen", true);
     updateDirtyState();
+  }
+}
+
+/**
+ * Reads the currently selected scoring mode from the scoring mode form.
+ * @returns {"vereinfachter_turniermodus"|"offizieller_modus"} Selected scoring mode key.
+ */
+function readSelectedScoringModeKey() {
+  const value = new FormData(scoringModeUi.form).get("mode_key");
+  return value === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus";
+}
+
+/**
+ * Applies a scoring mode key selection to the scoring mode form.
+ * @param {"vereinfachter_turniermodus"|"offizieller_modus"} modeKey Scoring mode key to apply.
+ * @returns {void}
+ */
+function writeScoringModeToForm(modeKey) {
+  const normalizedMode = modeKey === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus";
+  const radio = scoringModeUi.form.querySelector(`input[name="mode_key"][value="${normalizedMode}"]`);
+  if (radio) {
+    radio.checked = true;
+  }
+}
+
+/**
+ * Updates save-state UI for the scoring mode page.
+ * @returns {void}
+ */
+function updateScoringModeDirtyState() {
+  const draftMode = readSelectedScoringModeKey();
+  const isDirty = draftMode !== persistedScoringModeKey;
+  setSaveButtonState(scoringModeUi.saveButton, isDirty);
+  if (isDirty) {
+    setSaveStatus(scoringModeUi.saveStatus, "Ungespeicherte Aenderungen");
+  } else {
+    setSaveStatus(scoringModeUi.saveStatus, "Keine Aenderungen");
+  }
+}
+
+/**
+ * Loads persisted scoring mode and initializes page state.
+ * @returns {Promise<void>} Resolves once scoring mode has been initialized.
+ */
+async function initializeScoringMode() {
+  try {
+    const loaded = await loadScoringMode();
+    persistedScoringModeKey = loaded.mode_key;
+    writeScoringModeToForm(persistedScoringModeKey);
+    setSaveStatus(scoringModeUi.saveStatus, "Wertungsmodus geladen");
+    updateScoringModeDirtyState();
+  } catch (error) {
+    persistedScoringModeKey = "vereinfachter_turniermodus";
+    writeScoringModeToForm(persistedScoringModeKey);
+    setSaveStatus(scoringModeUi.saveStatus, "Standardwert geladen", true);
+    updateScoringModeDirtyState();
   }
 }
 
@@ -3218,6 +3280,28 @@ settingsUi.form.addEventListener("submit", async (event) => {
   }
 });
 
+scoringModeUi.form.addEventListener("change", () => {
+  updateScoringModeDirtyState();
+});
+
+scoringModeUi.form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setSaveButtonState(scoringModeUi.saveButton, false);
+  setSaveStatus(scoringModeUi.saveStatus, "Speichern...");
+
+  try {
+    const selectedMode = readSelectedScoringModeKey();
+    const savedState = await saveScoringMode(selectedMode);
+    persistedScoringModeKey = savedState.mode_key;
+    writeScoringModeToForm(persistedScoringModeKey);
+    setSaveStatus(scoringModeUi.saveStatus, "Gespeichert");
+    updateScoringModeDirtyState();
+  } catch (error) {
+    setSaveStatus(scoringModeUi.saveStatus, "Speichern fehlgeschlagen", true);
+    updateScoringModeDirtyState();
+  }
+});
+
 teamsUi.addButton.addEventListener("click", () => {
   const newRow = addTeamRow(teamsUi.rowsContainer);
   const newInput = newRow.querySelector(".team-name-input");
@@ -3527,6 +3611,7 @@ mobileQuery.addEventListener("change", () => {
 
 openView("turniersetup");
 initializeTournamentSettings();
+initializeScoringMode();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.
 // Placements must finish after both teams and phases.
 // Tournament planning runs last as it depends on all persisted state.
