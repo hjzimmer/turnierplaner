@@ -14,10 +14,10 @@ ok -> ergebnisse jederzeit bei standeingabe aktualisieren
 ok -> keine fragezeichen in "alle matches"
 ok -> bei löschen und bearbeiten abhängigkeiten nach vorn und hinten updaten, sofern alle Ergebnisse vorliegen
 ok -> nach Phasenende neue phase starten
+ok -> Schiedsrichter zuweisen prüfen
+ok -> Renderfehler Spieleübersicht, wenn pause definieren
 
-Schiedsrichter zuweisen prüfen
 
 pause einplanen bei gestarter Phase
 logo etc einbinden
-Renderfehler Spieleübersicht, wenn pause definieren
 
