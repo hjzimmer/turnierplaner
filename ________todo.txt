@@ -13,9 +13,9 @@ ok -> ergebnisse jederzeit bei standeingabe aktualisieren
     ergebnisse aktualisieren lassen bei eintrag der spiele, ebenso platzierungsübersicht
 ok -> keine fragezeichen in "alle matches"
 ok -> bei löschen und bearbeiten abhängigkeiten nach vorn und hinten updaten, sofern alle Ergebnisse vorliegen
+ok -> nach Phasenende neue phase starten
 
-
-nach Phasenende neue phase starten
+Schiedsrichter zuweisen prüfen
 
 pause einplanen bei gestarter Phase
 logo etc einbinden
