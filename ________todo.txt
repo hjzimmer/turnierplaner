@@ -16,8 +16,9 @@ ok -> bei löschen und bearbeiten abhängigkeiten nach vorn und hinten updaten, 
 ok -> nach Phasenende neue phase starten
 ok -> Schiedsrichter zuweisen prüfen
 ok -> Renderfehler Spieleübersicht, wenn pause definieren
+ok -> pause einplanen bei gestarter Phase
 
+Passwort und Bereich für Anzeige frei, Benennung der App
 
-pause einplanen bei gestarter Phase
 logo etc einbinden
 

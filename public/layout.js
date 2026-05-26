@@ -118,7 +118,7 @@ export function mountScoringModeLayout(targetElement) {
               <h4>Vereinfachter Turniermodus</h4>
               <p class="scoring-mode-summary">Schnelle Auswertung mit Satzpunkten pro Satz.</p>
               <ul class="scoring-mode-rules">
-                <li><strong>Matchsieger:</strong> Team mit mehr Satzsiegen, bei Gleichstand Match-Unentschieden.</li>
+                <li><strong>Matchsieger:</strong> Team mit mehr Satzsiegen, Gruppenspiele: bei Gleichstand Match-Unentschieden, Finalphasen: bessere Punktedifferenz.</li>
                 <li><strong>Gruppenpunkte:</strong> pro Satzsieg 2 Punkte, pro Satz-Unentschieden 1 Punkt je Team.</li>
                 <li><strong>Rangfolge:</strong> Team-Gesamtpunkte vor Satzdifferenz (S+ minus S-) vor direktem Vergleich vor Punktedifferenz.</li>
                 <li><strong>Satzgleichstand:</strong> erlaubt.</li>

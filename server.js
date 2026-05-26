@@ -771,6 +771,50 @@ function calculateOfficialGroupMatchPoints(setStats, configuredSetCount) {
 }
 
 /**
+ * Resolves winner and loser ids from aggregated set stats.
+ * Primary criterion is number of set wins. If set wins are tied,
+ * total scored points across finished sets are used as tie-breaker.
+ * @param {{team1Wins: number, team2Wins: number, team1Points: number, team2Points: number}} setStats Aggregated set statistics.
+ * @param {number|null} team1Id Team 1 id from match row.
+ * @param {number|null} team2Id Team 2 id from match row.
+ * @returns {{winnerId: number|null, loserId: number|null}|null} Winner/loser ids, or null when no unique winner exists.
+ */
+function resolveWinnerAndLoserFromSetStats(setStats, team1Id, team2Id) {
+  const hasTeam1 = Number.isInteger(team1Id) && team1Id > 0;
+  const hasTeam2 = Number.isInteger(team2Id) && team2Id > 0;
+
+  if (setStats.team1Wins > setStats.team2Wins && hasTeam1) {
+    return {
+      winnerId: team1Id,
+      loserId: hasTeam2 ? team2Id : null,
+    };
+  }
+
+  if (setStats.team2Wins > setStats.team1Wins && hasTeam2) {
+    return {
+      winnerId: team2Id,
+      loserId: hasTeam1 ? team1Id : null,
+    };
+  }
+
+  if (setStats.team1Points > setStats.team2Points && hasTeam1) {
+    return {
+      winnerId: team1Id,
+      loserId: hasTeam2 ? team2Id : null,
+    };
+  }
+
+  if (setStats.team2Points > setStats.team1Points && hasTeam2) {
+    return {
+      winnerId: team2Id,
+      loserId: hasTeam1 ? team1Id : null,
+    };
+  }
+
+  return null;
+}
+
+/**
  * Calculates match completion and winner/loser ids from set rows.
  * @param {Array<object>} sets Set rows with team1_score, team2_score, is_finished.
  * @param {number|null} team1Id Team 1 id from match row.
@@ -815,21 +859,12 @@ function calculateMatchOutcomeFromSets(
     };
   }
 
-  if (setStats.team1Wins > setStats.team2Wins && Number.isInteger(team1Id) && team1Id > 0) {
+  const winnerOutcome = resolveWinnerAndLoserFromSetStats(setStats, team1Id, team2Id);
+  if (winnerOutcome) {
     return {
       isFinished: 1,
-      winnerId: team1Id,
-      loserId: Number.isInteger(team2Id) && team2Id > 0 ? team2Id : null,
-      isDraw: false,
-      error: null,
-      setStats,
-    };
-  }
-  if (setStats.team2Wins > setStats.team1Wins && Number.isInteger(team2Id) && team2Id > 0) {
-    return {
-      isFinished: 1,
-      winnerId: team2Id,
-      loserId: Number.isInteger(team1Id) && team1Id > 0 ? team1Id : null,
+      winnerId: winnerOutcome.winnerId,
+      loserId: winnerOutcome.loserId,
       isDraw: false,
       error: null,
       setStats,

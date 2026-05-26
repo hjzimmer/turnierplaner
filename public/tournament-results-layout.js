@@ -291,8 +291,8 @@ function createOverallPlacementsCard(placements) {
     <thead>
       <tr>
         <th>Platzierung</th>
-        <th>Quelle</th>
         <th>Ermitteltes Team</th>
+        <th>Quelle</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -303,8 +303,8 @@ function createOverallPlacementsCard(placements) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${escapeHtml(String(placement.position_label || "-"))}</td>
-      <td>${escapeHtml(String(placement.source_label || "-"))}</td>
       <td>${escapeHtml(String(placement.resolved_team || "-"))}</td>
+      <td>${escapeHtml(String(placement.source_label || "-"))}</td>
     `;
     tbody.appendChild(tr);
   });

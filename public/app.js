@@ -2724,8 +2724,17 @@ function snapToNearestSlot(requestedTime) {
 }
 
 /**
- * Inserts one pause across all fields at a shared time slot and shifts all
- * later matches on every field by the pause duration.
+ * Returns target fields for global pause insertion.
+ * The requested behavior is to always apply pauses to both fields.
+ * @returns {Array<number>} Ordered list of target field numbers.
+ */
+function getPauseTargetFields() {
+  return [1, 2];
+}
+
+/**
+ * Inserts one pause across both fields at a shared time slot and shifts all
+ * later matches on these fields by the pause duration.
  * The requested start time is aligned to the nearest existing time slot.
  * No phase selection is required.
  * @returns {Promise<void>} Resolves when insertion and persistence are complete.
@@ -2733,15 +2742,6 @@ function snapToNearestSlot(requestedTime) {
 async function insertPauseSlot() {
   if (persistedMatches.length === 0) {
     window.alert("Es sind noch keine Matches geplant. Bitte zuerst Matches generieren.");
-    return;
-  }
-
-  const lockedPhaseIds = [...new Set([...startedMatchPhaseIds].map((phaseId) => Number(phaseId)))].filter(
-    (phaseId) => Number.isInteger(phaseId) && phaseId > 0
-  );
-  if (lockedPhaseIds.length > 0) {
-    const lockedLabel = lockedPhaseIds.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
-    window.alert(`Pause einfuegen nicht moeglich: gestartete Phase(n) sind gesperrt (${lockedLabel}).`);
     return;
   }
 
@@ -2777,24 +2777,36 @@ async function insertPauseSlot() {
     return;
   }
 
-  // Collect all field numbers present in persisted matches.
-  const allFields = [...new Set(persistedMatches.map((m) => Number(m.field_number)).filter((f) => f > 0))].sort(
-    (a, b) => a - b
+  const allFields = getPauseTargetFields();
+
+  const fallbackPhaseId = Number(
+    persistedMatches.find((match) => Number.isInteger(Number(match.phase_id)) && Number(match.phase_id) > 0)?.phase_id || 0
   );
 
   // Determine which phase to assign each pause to (first phase found on that field).
   const phaseByField = new Map();
   allFields.forEach((field) => {
-    const match = persistedMatches.find((m) => Number(m.field_number) === field);
+    const match = [...persistedMatches]
+      .filter(
+        (m) => Number(m.field_number) === field && Number.isInteger(Number(m.phase_id)) && Number(m.phase_id) > 0
+      )
+      .sort((left, right) => toMinutes(String(left.start_time || "00:00")) - toMinutes(String(right.start_time || "00:00")))[0];
     if (match) {
       phaseByField.set(field, Number(match.phase_id));
+      return;
     }
+    phaseByField.set(field, fallbackPhaseId);
   });
 
-  // Shift all matches at or after pauseStart on every field by pauseDuration.
+  // Shift all matches at or after pauseStart on affected fields by pauseDuration.
+  const affectedFields = new Set(allFields);
   const updatedById = new Map();
   persistedMatches
-    .filter((m) => toMinutes(String(m.start_time || "")) >= toMinutes(pauseStart))
+    .filter(
+      (m) =>
+        affectedFields.has(Number(m.field_number)) &&
+        toMinutes(String(m.start_time || "")) >= toMinutes(pauseStart)
+    )
     .forEach((match) => {
       updatedById.set(Number(match.id), {
         ...match,
@@ -2853,7 +2865,7 @@ async function insertPauseSlot() {
 
 /**
  * Deletes all pause entries that share the same time slot as the clicked pause,
- * then shifts all later matches across every field back by the pause duration.
+ * then shifts all later matches on the affected fields back by the pause duration.
  * @param {number} pauseMatchId Id of one of the pause entries on the target slot.
  * @returns {Promise<void>} Resolves when deletion and persistence are complete.
  */
@@ -2869,15 +2881,6 @@ async function deletePauseSlot(pauseMatchId) {
     return;
   }
 
-  const lockedPhaseIds = [...new Set([...startedMatchPhaseIds].map((phaseId) => Number(phaseId)))].filter(
-    (phaseId) => Number.isInteger(phaseId) && phaseId > 0
-  );
-  if (lockedPhaseIds.length > 0) {
-    const lockedLabel = lockedPhaseIds.map((phaseId) => getPhaseDisplayName(phaseId)).join(", ");
-    window.alert(`Pause loeschen nicht moeglich: gestartete Phase(n) sind gesperrt (${lockedLabel}).`);
-    return;
-  }
-
   const pauseDuration = Math.max(1, Number(pauseMatch.duration_minutes) || 0);
   const pauseStart = String(pauseMatch.start_time || "");
   const removedPauseEntries = persistedMatches.filter(
@@ -2888,6 +2891,7 @@ async function deletePauseSlot(pauseMatchId) {
 
   // Collect ids of all pause entries on this time slot (all fields).
   const pauseIdsOnSlot = new Set(removedPauseEntries.map((match) => Number(match.id)));
+  const affectedFields = new Set(removedPauseEntries.map((match) => Number(match.field_number)));
 
   // Shift all non-pause matches that start strictly after the pause slot.
   const updatedById = new Map();
@@ -2895,6 +2899,7 @@ async function deletePauseSlot(pauseMatchId) {
     .filter(
       (match) =>
         !pauseIdsOnSlot.has(Number(match.id)) &&
+        affectedFields.has(Number(match.field_number)) &&
         toMinutes(String(match.start_time || "")) > toMinutes(pauseStart)
     )
     .forEach((match) => {
