@@ -216,7 +216,7 @@ function createMatchBlockResult(block) {
   const tbody = table.querySelector("tbody");
   rows.forEach((row) => {
     const tr = document.createElement("tr");
-    const statusText = row?.is_finished ? "Abgeschlossen" : "Offen";
+    const statusText = row?.is_finished ? "Fertig" : "Offen";
     const statusClass = row?.is_finished ? "is-finished" : "is-open";
     const winnerSuffix = row?.winner_label ? ` | Sieger: ${String(row.winner_label)}` : "";
 

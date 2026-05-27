@@ -89,6 +89,7 @@ const phaseConfigMount = document.getElementById("phaseConfigMount");
 const scoringModeMount = document.getElementById("scoringModeMount");
 const placementsMount = document.getElementById("placementsMount");
 const tournamentPlanningMount = document.getElementById("tournamentPlanningMount");
+const tournamentOverviewMount = document.getElementById("tournamentOverviewMount");
 const tournamentMatchesMount = document.getElementById("tournamentMatchesMount");
 const tournamentResultsMount = document.getElementById("tournamentResultsMount");
 
@@ -98,7 +99,15 @@ const settingsUi = mountTournamentSettingsLayout(settingsMount);
 const teamsUi = mountTeamsLayout(teamsMount);
 const phasesUi = mountPhaseConfigLayout(phaseConfigMount);
 const scoringModeUi = mountScoringModeLayout(scoringModeMount);
-const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount);
+const tournamentPlanningUi = mountTournamentPlanningLayout(tournamentPlanningMount, {
+  placeholderText: "Spielplanung wird hier angezeigt",
+});
+const tournamentOverviewUi = mountTournamentPlanningLayout(tournamentOverviewMount, {
+  placeholderText: "Spielplan wird hier angezeigt",
+  readOnly: true,
+});
+const tournamentPlanningUis = [tournamentPlanningUi, tournamentOverviewUi];
+const editableTournamentPlanningUis = [tournamentPlanningUi];
 const tournamentMatchesUi = mountTournamentMatchesLayout(tournamentMatchesMount);
 const tournamentResultsUi = mountTournamentResultsLayout(tournamentResultsMount);
 let teamsWithIds = [];
@@ -118,6 +127,24 @@ let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
 let activeMatchResultDialog = null;
 let persistedScoringModeKey = "vereinfachter_turniermodus";
+
+/**
+ * Iterates over all mounted tournament planning views.
+ * @param {(ui: object) => void} callback Callback for each mounted planning UI.
+ * @returns {void}
+ */
+function forEachTournamentPlanningUi(callback) {
+  tournamentPlanningUis.forEach(callback);
+}
+
+/**
+ * Iterates over all editable tournament planning views.
+ * @param {(ui: object) => void} callback Callback for each editable planning UI.
+ * @returns {void}
+ */
+function forEachEditableTournamentPlanningUi(callback) {
+  editableTournamentPlanningUis.forEach(callback);
+}
 
 /**
  * Returns current started-phase state payload for persistence.
@@ -637,6 +664,8 @@ function renderAllPhaseBlocks() {
       persistedPlacements
     );
   });
+
+  refreshTournamentPlanningGroups();
 }
 
 /**
@@ -813,13 +842,10 @@ async function initializePlacements() {
  * @returns {void}
  */
 function refreshTournamentPlanningGroups() {
-  const selectedPhaseIds = readSelectedPhaseIds(tournamentPlanningUi.phaseSelect);
-  renderTournamentPlanningGroups(
-    tournamentPlanningUi.groupSelect,
-    selectedPhaseIds,
-    phaseBlocksByPhase,
-    persistedPhases
-  );
+  forEachEditableTournamentPlanningUi((ui) => {
+    const selectedPhaseIds = readSelectedPhaseIds(ui.phaseSelect);
+    renderTournamentPlanningGroups(ui.groupSelect, selectedPhaseIds, phaseBlocksByPhase, persistedPhases);
+  });
 }
 
 /**
@@ -827,12 +853,11 @@ function refreshTournamentPlanningGroups() {
  * @returns {void}
  */
 function renderAllMatchGrid() {
-  renderMatchGrid(
-    tournamentPlanningUi.gridArea,
-    persistedMatches,
-    persistedPhases,
-    teamsWithIds
-  );
+  forEachTournamentPlanningUi((ui) => {
+    renderMatchGrid(ui.gridArea, persistedMatches, persistedPhases, teamsWithIds, {
+      readOnly: ui.readOnly === true,
+    });
+  });
   renderAllTournamentMatchesTable();
 }
 
@@ -1591,14 +1616,11 @@ async function openMatchResultDialog(matchId) {
  * @returns {Promise<void>} Resolves when initialization is complete.
  */
 async function initializeTournamentPlanning() {
-  renderTournamentPlanningPhases(tournamentPlanningUi.phaseSelect, persistedPhases);
-  renderTournamentPlanningGroups(
-    tournamentPlanningUi.groupSelect,
-    [],
-    phaseBlocksByPhase,
-    persistedPhases
-  );
-  renderTournamentPlanningFields(tournamentPlanningUi.fieldSelect, persistedSettings.fields);
+  forEachEditableTournamentPlanningUi((ui) => {
+    renderTournamentPlanningPhases(ui.phaseSelect, persistedPhases);
+    renderTournamentPlanningGroups(ui.groupSelect, [], phaseBlocksByPhase, persistedPhases);
+    renderTournamentPlanningFields(ui.fieldSelect, persistedSettings.fields);
+  });
 
   try {
     teamsWithIds = await loadTeamsWithIds();
@@ -1609,15 +1631,17 @@ async function initializeTournamentPlanning() {
 
   await restoreStartedMatchPhaseState();
 
+  refreshTournamentPlanningGroups();
   renderAllMatchGrid();
 }
 
 /**
  * Returns selected group refs from the group multi-select.
+ * @param {object} ui Tournament planning view instance.
  * @returns {Array<{phaseId: number, blockId: number}>} Selected phase/block refs.
  */
-function getSelectedBlockRefs() {
-  const selectedGroupRefs = [...tournamentPlanningUi.groupSelect.selectedOptions]
+function getSelectedBlockRefs(ui) {
+  const selectedGroupRefs = [...ui.groupSelect.selectedOptions]
     .map((o) => {
       const dashIdx = o.value.indexOf("-");
       return {
@@ -1626,7 +1650,7 @@ function getSelectedBlockRefs() {
       };
     })
     .filter((ref) => ref.phaseId > 0 && ref.blockId > 0);
-  const selectedPhaseIds = new Set(readSelectedPhaseIds(tournamentPlanningUi.phaseSelect));
+  const selectedPhaseIds = new Set(readSelectedPhaseIds(ui.phaseSelect));
   const phasesWithSelectedGroups = new Set(selectedGroupRefs.map((ref) => ref.phaseId));
 
   let result = [...selectedGroupRefs];
@@ -1649,14 +1673,15 @@ function getSelectedBlockRefs() {
 /**
  * Returns selected field numbers from the field multi-select.
  * Falls back to all available fields when none are selected.
+ * @param {object} ui Tournament planning view instance.
  * @returns {Array<number>} Selected field numbers.
  */
-function getSelectedFieldNumbers() {
-  const selected = [...tournamentPlanningUi.fieldSelect.selectedOptions].map((o) => Number(o.value));
+function getSelectedFieldNumbers(ui) {
+  const selected = [...ui.fieldSelect.selectedOptions].map((o) => Number(o.value));
   if (selected.length > 0) {
     return selected;
   }
-  return [...tournamentPlanningUi.fieldSelect.options]
+  return [...ui.fieldSelect.options]
     .map((o) => Number(o.value))
     .filter((value) => Number.isInteger(value) && value > 0);
 }
@@ -1665,11 +1690,12 @@ function getSelectedFieldNumbers() {
  * Expands selected block refs with required source-phase blocks when both phases are selected.
  * If a selected block depends on another selected phase, all blocks of that source phase are
  * added to the planning set so the source phase is generated first.
+ * @param {object} ui Tournament planning view instance.
  * @param {Array<{phaseId: number, blockId: number}>} blockRefs Initially selected block refs.
  * @returns {Array<{phaseId: number, blockId: number}>} Expanded unique block refs.
  */
-function expandBlockRefsWithSelectedSources(blockRefs) {
-  const selectedPhaseIds = new Set(readSelectedPhaseIds(tournamentPlanningUi.phaseSelect));
+function expandBlockRefsWithSelectedSources(ui, blockRefs) {
+  const selectedPhaseIds = new Set(readSelectedPhaseIds(ui.phaseSelect));
   const keyOf = (ref) => `${ref.phaseId}-${ref.blockId}`;
   const included = new Set(blockRefs.map((ref) => keyOf(ref)));
   const result = [...blockRefs];
@@ -1926,16 +1952,17 @@ function resolvePlanningOrder(blockRefs) {
 
 /**
  * Handles planning generation and persists matches phase-by-phase.
+ * @param {object} ui Tournament planning view instance.
  * @returns {Promise<void>} Resolves when generation flow is complete.
  */
-async function handleGenerateMatches() {
-  let blockRefs = getSelectedBlockRefs();
+async function handleGenerateMatches(ui) {
+  let blockRefs = getSelectedBlockRefs(ui);
 
   if (blockRefs.length === 0) {
     return;
   }
 
-  blockRefs = expandBlockRefsWithSelectedSources(blockRefs);
+  blockRefs = expandBlockRefsWithSelectedSources(ui, blockRefs);
 
   const slotValidation = validatePlanningBlockSlots(blockRefs);
   if (!slotValidation.isValid) {
@@ -1943,7 +1970,7 @@ async function handleGenerateMatches() {
     return;
   }
 
-  const fieldNumbers = getSelectedFieldNumbers();
+  const fieldNumbers = getSelectedFieldNumbers(ui);
   if (fieldNumbers.length === 0) {
     return;
   }
@@ -3369,10 +3396,11 @@ function recheckRefereesAfterDnD() {
 
 /**
  * Starts referee assignment for exactly one selected phase.
+ * @param {object} ui Tournament planning view instance.
  * @returns {Promise<void>} Resolves when assignment and persistence are complete.
  */
-async function handleAssignRefereesForSelectedPhase() {
-  const selectedPhaseIds = readSelectedPhaseIds(tournamentPlanningUi.phaseSelect);
+async function handleAssignRefereesForSelectedPhase(ui) {
+  const selectedPhaseIds = readSelectedPhaseIds(ui.phaseSelect);
   if (selectedPhaseIds.length !== 1) {
     window.alert("Bitte genau eine Phase auswaehlen, um Schiedsrichter zuzuweisen.");
     return;
@@ -3414,131 +3442,130 @@ async function handleAssignRefereesForSelectedPhase() {
   window.alert(`Schiedsrichter zugewiesen: ${phaseName} (${result.assignedCount}/${result.plannableCount}).`);
 }
 
-tournamentPlanningUi.phaseSelect.addEventListener("change", () => {
-  refreshTournamentPlanningGroups();
-});
+forEachEditableTournamentPlanningUi((planningUi) => {
+  planningUi.phaseSelect.addEventListener("change", () => {
+    refreshTournamentPlanningGroups();
+  });
 
-tournamentPlanningUi.generateButton.addEventListener("click", handleGenerateMatches);
-tournamentPlanningUi.pauseButton.addEventListener("click", insertPauseSlot);
-tournamentPlanningUi.assignRefereesButton.addEventListener("click", handleAssignRefereesForSelectedPhase);
+  planningUi.generateButton.addEventListener("click", () => handleGenerateMatches(planningUi));
+  planningUi.pauseButton.addEventListener("click", insertPauseSlot);
+  planningUi.assignRefereesButton.addEventListener("click", () => handleAssignRefereesForSelectedPhase(planningUi));
 
-tournamentPlanningUi.gridArea.addEventListener("dragstart", (event) => {
-  const card = event.target.closest(".tp-match-card");
-  if (!card) {
-    return;
-  }
-
-  const matchId = card.dataset.matchId || "";
-  event.dataTransfer.setData("text/plain", matchId);
-  event.dataTransfer.effectAllowed = "move";
-  card.classList.add("is-dragging");
-});
-
-tournamentPlanningUi.gridArea.addEventListener("dragend", (event) => {
-  const card = event.target.closest(".tp-match-card");
-  if (card) {
-    card.classList.remove("is-dragging");
-  }
-
-  tournamentPlanningUi.gridArea
-    .querySelectorAll(".tp-drop-slot.is-drop-target")
-    .forEach((slot) => slot.classList.remove("is-drop-target"));
-});
-
-tournamentPlanningUi.gridArea.addEventListener("dragover", (event) => {
-  const slot = event.target.closest(".tp-drop-slot");
-  if (!slot) {
-    return;
-  }
-
-  event.preventDefault();
-  event.dataTransfer.dropEffect = "move";
-
-  tournamentPlanningUi.gridArea
-    .querySelectorAll(".tp-drop-slot.is-drop-target")
-    .forEach((el) => {
-      if (el !== slot) {
-        el.classList.remove("is-drop-target");
-      }
-    });
-  slot.classList.add("is-drop-target");
-});
-
-tournamentPlanningUi.gridArea.addEventListener("drop", async (event) => {
-  const slot = event.target.closest(".tp-drop-slot");
-  if (!slot) {
-    return;
-  }
-
-  event.preventDefault();
-  slot.classList.remove("is-drop-target");
-
-  const matchId = Number(event.dataTransfer.getData("text/plain"));
-  const targetField = Number(slot.dataset.field);
-  const targetTime = String(slot.dataset.time || "");
-
-  if (!Number.isInteger(matchId) || matchId <= 0) {
-    return;
-  }
-  if (!Number.isInteger(targetField) || targetField <= 0) {
-    return;
-  }
-  if (!targetTime) {
-    return;
-  }
-
-  await moveMatchToSlot(matchId, targetField, targetTime);
-});
-
-tournamentPlanningUi.gridArea.addEventListener("click", async (event) => {
-  const deletePauseBtn = event.target.closest("[data-action='delete-pause']");
-  if (deletePauseBtn) {
-    const pauseMatchId = Number(deletePauseBtn.dataset.matchId);
-    if (!Number.isInteger(pauseMatchId) || pauseMatchId <= 0) {
+  planningUi.gridArea.addEventListener("dragstart", (event) => {
+    const card = event.target.closest(".tp-match-card");
+    if (!card) {
       return;
     }
 
-    const confirmed = window.confirm("Diese Pause wirklich loeschen?");
+    const matchId = card.dataset.matchId || "";
+    event.dataTransfer.setData("text/plain", matchId);
+    event.dataTransfer.effectAllowed = "move";
+    card.classList.add("is-dragging");
+  });
+
+  planningUi.gridArea.addEventListener("dragend", (event) => {
+    const card = event.target.closest(".tp-match-card");
+    if (card) {
+      card.classList.remove("is-dragging");
+    }
+
+    planningUi.gridArea
+      .querySelectorAll(".tp-drop-slot.is-drop-target")
+      .forEach((slot) => slot.classList.remove("is-drop-target"));
+  });
+
+  planningUi.gridArea.addEventListener("dragover", (event) => {
+    const slot = event.target.closest(".tp-drop-slot");
+    if (!slot) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+
+    planningUi.gridArea
+      .querySelectorAll(".tp-drop-slot.is-drop-target")
+      .forEach((el) => {
+        if (el !== slot) {
+          el.classList.remove("is-drop-target");
+        }
+      });
+    slot.classList.add("is-drop-target");
+  });
+
+  planningUi.gridArea.addEventListener("drop", async (event) => {
+    const slot = event.target.closest(".tp-drop-slot");
+    if (!slot) {
+      return;
+    }
+
+    event.preventDefault();
+    slot.classList.remove("is-drop-target");
+
+    const matchId = Number(event.dataTransfer.getData("text/plain"));
+    const targetField = Number(slot.dataset.field);
+    const targetTime = String(slot.dataset.time || "");
+
+    if (!Number.isInteger(matchId) || matchId <= 0) {
+      return;
+    }
+    if (!Number.isInteger(targetField) || targetField <= 0) {
+      return;
+    }
+    if (!targetTime) {
+      return;
+    }
+
+    await moveMatchToSlot(matchId, targetField, targetTime);
+  });
+
+  planningUi.gridArea.addEventListener("click", async (event) => {
+    const deletePauseBtn = event.target.closest("[data-action='delete-pause']");
+    if (deletePauseBtn) {
+      const pauseMatchId = Number(deletePauseBtn.dataset.matchId);
+      if (!Number.isInteger(pauseMatchId) || pauseMatchId <= 0) {
+        return;
+      }
+
+      const confirmed = window.confirm("Diese Pause wirklich loeschen?");
+      if (!confirmed) {
+        return;
+      }
+
+      await deletePauseSlot(pauseMatchId);
+      return;
+    }
+
+    const deleteBtn = event.target.closest("[data-action='delete-phase']");
+    if (!deleteBtn) {
+      return;
+    }
+
+    const phaseId = Number(deleteBtn.dataset.phaseId);
+    if (!Number.isInteger(phaseId) || phaseId <= 0) {
+      return;
+    }
+
+    const phaseName = String(deleteBtn.dataset.phaseName || `Phase ${phaseId}`);
+    const confirmed = window.confirm(`Alle Matches in ${phaseName} wirklich loeschen?`);
     if (!confirmed) {
       return;
     }
 
-    await deletePauseSlot(pauseMatchId);
-    return;
-  }
-
-  const deleteBtn = event.target.closest("[data-action='delete-phase']");
-  if (!deleteBtn) {
-    return;
-  }
-
-  const phaseId = Number(deleteBtn.dataset.phaseId);
-  if (!phaseId) {
-    return;
-  }
-
-  const phaseName = deleteBtn.dataset.phaseName || "diese Phase";
-  if (isPhaseScheduleLocked(phaseId)) {
-    window.alert(`Phase ${getPhaseDisplayName(phaseId)} ist gestartet und kann im Spielplan nicht mehr geaendert werden.`);
-    return;
-  }
-
-  const confirmed = window.confirm(`Alle geplanten Matches für "${phaseName}" wirklich löschen?`);
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    await deleteMatchesForPhase(phaseId);
-    persistedMatches = persistedMatches.filter((m) => m.phase_id !== phaseId);
-    renderAllMatchGrid();
-  } catch {
-    await recoverMatchesAfterPersistenceFailure(
-      "Phase konnte nicht geloescht werden. Spielplan wurde aus der Datenbank neu geladen."
-    );
-  }
+    try {
+      await deleteMatchesForPhase(phaseId);
+      persistedMatches = persistedMatches.filter((match) => Number(match.phase_id) !== phaseId);
+      startedMatchPhaseIds.delete(phaseId);
+      if (Number(activeStartedMatchPhaseId) === phaseId) {
+        activeStartedMatchPhaseId = null;
+      }
+      await persistStartedMatchPhaseState();
+      await reloadMatchesAndRender();
+    } catch {
+      // Keep in-memory state when reload fails.
+    }
+  });
 });
-
 tournamentMatchesUi.tableArea.addEventListener("change", async (event) => {
   const select = event.target.closest(".tm-ref-select");
   if (!select) {
@@ -3746,7 +3773,9 @@ settingsUi.form.addEventListener("submit", async (event) => {
     writeTournamentSettingsToForm(settingsUi.form, saved);
     setSaveStatus(settingsUi.saveStatus, "Gespeichert");
     updateDirtyState();
-    renderTournamentPlanningFields(tournamentPlanningUi.fieldSelect, persistedSettings.fields);
+    forEachEditableTournamentPlanningUi((ui) => {
+      renderTournamentPlanningFields(ui.fieldSelect, persistedSettings.fields);
+    });
   } catch (error) {
     setSaveStatus(settingsUi.saveStatus, "Speichern fehlgeschlagen", true);
     updateDirtyState();
@@ -3910,6 +3939,7 @@ phasesUi.columnsContainer.addEventListener("click", async (event) => {
     try {
       await savePhasesNow();
       showPhasesStatus("Phase gespeichert");
+      refreshTournamentPlanningGroups();
     } catch {
       showPhasesStatus("Speichern fehlgeschlagen", true);
     }
@@ -3936,6 +3966,7 @@ phasesUi.columnsContainer.addEventListener("click", async (event) => {
     try {
       await savePhasesNow();
       showPhasesStatus("Phase geloescht");
+      refreshTournamentPlanningGroups();
     } catch {
       showPhasesStatus("Loeschen fehlgeschlagen", true);
     }

@@ -161,23 +161,6 @@ async function ensureSetupRow() {
  */
 async function initializeDatabase() {
   await run(`
-    CREATE TABLE IF NOT EXISTS app_state (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      elements_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS relations (
-      id INTEGER PRIMARY KEY,
-      left_element TEXT NOT NULL,
-      right_element TEXT NOT NULL,
-      position INTEGER NOT NULL
-    )
-  `);
-
-  await run(`
     CREATE TABLE IF NOT EXISTS teams (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
@@ -213,23 +196,6 @@ async function initializeDatabase() {
   } catch (_) {
     // Column already present — no action needed.
   }
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS gruppe_configs (
-      phase_id INTEGER PRIMARY KEY,
-      teams_per_group INTEGER NOT NULL DEFAULT 4
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS gruppe_slots (
-      phase_id    INTEGER NOT NULL,
-      group_index INTEGER NOT NULL,
-      slot_index  INTEGER NOT NULL,
-      team_name   TEXT,
-      PRIMARY KEY (phase_id, group_index, slot_index)
-    )
-  `);
 
   await run(`
     CREATE TABLE IF NOT EXISTS phase_blocks (
@@ -404,179 +370,13 @@ async function initializeDatabase() {
   }
 
   // Development mode: keep only the current schema.
+  await run("DROP TABLE IF EXISTS app_state");
+  await run("DROP TABLE IF EXISTS relations");
+  await run("DROP TABLE IF EXISTS gruppe_configs");
+  await run("DROP TABLE IF EXISTS gruppe_slots");
   await run("DROP TABLE IF EXISTS tournament_settings");
 
-  const stateRows = await all("SELECT id FROM app_state WHERE id = 1");
-  if (stateRows.length === 0) {
-    await run(
-      "INSERT INTO app_state (id, elements_json, updated_at) VALUES (1, ?, datetime('now'))",
-      [JSON.stringify([])]
-    );
-  }
-
   await ensureSetupRow();
-}
-
-/**
- * Normalizes element input by trimming values, removing blanks, and deduplicating.
- * @param {Array<*>} inputElements Raw element list.
- * @returns {Array<string>} Normalized unique element names.
- */
-function normalizeElements(inputElements) {
-  if (!Array.isArray(inputElements)) {
-    return [];
-  }
-
-  const seen = new Set();
-  const normalized = [];
-
-  for (const item of inputElements) {
-    const value = String(item || "").trim();
-    if (!value || seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    normalized.push(value);
-  }
-
-  return normalized;
-}
-
-/**
- * Reorders pair entries to reduce consecutive element overlap.
- * @param {Array<{left: string, right: string, position: number}>} pairs Pair list to reorder in place.
- * @returns {Array<{left: string, right: string, position: number}>} Reordered pairs.
- */
-function normalizePairs(pairs) {
-  if (!Array.isArray(pairs) || pairs.length < 2) {
-    return pairs;
-  }
-
-  const usageCount = new Map();
-  const lastUsageIndex = new Map();
-  const remaining = pairs.map((pair, originalIndex) => ({ pair, originalIndex }));
-  const orderedPairs = [];
-
-  /**
-   * Checks whether two pair objects share at least one element.
-   * @param {{left: string, right: string}|undefined} firstPair First pair.
-   * @param {{left: string, right: string}|undefined} secondPair Second pair.
-   * @returns {boolean} True when both pairs share an element.
-   */
-  const sharesElement = (firstPair, secondPair) => {
-    if (!firstPair || !secondPair) {
-      return false;
-    }
-
-    return (
-      firstPair.left === secondPair.left ||
-      firstPair.left === secondPair.right ||
-      firstPair.right === secondPair.left ||
-      firstPair.right === secondPair.right
-    );
-  };
-
-  /**
-   * Reads usage count for one element.
-   * @param {string} element Element identifier.
-   * @returns {number} Number of uses in ordered output.
-   */
-  const getUsageCount = (element) => usageCount.get(element) || 0;
-  /**
-   * Reads latest usage index for one element.
-   * @param {string} element Element identifier.
-   * @returns {number} Latest index or -1 when never used.
-   */
-  const getLastUsageIndex = (element) => lastUsageIndex.get(element) ?? -1;
-
-  while (remaining.length > 0) {
-    const previousPair = orderedPairs[orderedPairs.length - 1];
-    const disjointCandidates = previousPair
-      ? remaining.filter((entry) => !sharesElement(previousPair, entry.pair))
-      : remaining;
-    const candidatePool = disjointCandidates.length > 0 ? disjointCandidates : remaining;
-
-    let bestEntry = candidatePool[0];
-
-    for (const entry of candidatePool.slice(1)) {
-      const bestPair = bestEntry.pair;
-      const currentPair = entry.pair;
-
-      const bestUsageScore = getUsageCount(bestPair.left) + getUsageCount(bestPair.right);
-      const currentUsageScore = getUsageCount(currentPair.left) + getUsageCount(currentPair.right);
-
-      if (currentUsageScore < bestUsageScore) {
-        bestEntry = entry;
-        continue;
-      }
-
-      if (currentUsageScore > bestUsageScore) {
-        continue;
-      }
-
-      const bestRecencyScore = Math.max(
-        getLastUsageIndex(bestPair.left),
-        getLastUsageIndex(bestPair.right)
-      );
-      const currentRecencyScore = Math.max(
-        getLastUsageIndex(currentPair.left),
-        getLastUsageIndex(currentPair.right)
-      );
-
-      if (currentRecencyScore < bestRecencyScore) {
-        bestEntry = entry;
-        continue;
-      }
-
-      if (currentRecencyScore > bestRecencyScore) {
-        continue;
-      }
-
-      if (entry.originalIndex < bestEntry.originalIndex) {
-        bestEntry = entry;
-      }
-    }
-
-    orderedPairs.push(bestEntry.pair);
-    usageCount.set(bestEntry.pair.left, getUsageCount(bestEntry.pair.left) + 1);
-    usageCount.set(bestEntry.pair.right, getUsageCount(bestEntry.pair.right) + 1);
-    lastUsageIndex.set(bestEntry.pair.left, orderedPairs.length - 1);
-    lastUsageIndex.set(bestEntry.pair.right, orderedPairs.length - 1);
-
-    remaining.splice(remaining.indexOf(bestEntry), 1);
-  }
-
-  pairs.splice(0, pairs.length, ...orderedPairs);
-  for (let index = 0; index < pairs.length; index += 1) {
-    pairs[index].position = index;
-  }
-
-  return pairs;
-}
-
-/**
- * Generates all unique pair combinations and applies ordering normalization.
- * @param {Array<string>} elements Source element list.
- * @returns {Array<{left: string, right: string, position: number}>} Ordered unique pairs.
- */
-function buildUniquePairs(elements) {
-  const pairs = [];
-  let position = 0;
-
-  for (let i = 0; i < elements.length; i += 1) {
-    for (let j = i + 1; j < elements.length; j += 1) {
-      pairs.push({
-        left: elements[i],
-        right: elements[j],
-        position,
-      });
-      position += 1;
-    }
-  }
-
-  normalizePairs(pairs);
-
-  return pairs;
 }
 
 /**
@@ -2269,113 +2069,6 @@ app.put("/api/phases/:id/blocks", async (req, res) => {
       // no-op
     }
     res.status(500).json({ error: "Failed to save phase blocks." });
-  }
-});
-
-// Liefert den aktuellen Elementzustand und die gespeicherten Relationen an das Frontend.
-app.get("/api/state", async (req, res) => {
-  try {
-    const state = await all("SELECT elements_json FROM app_state WHERE id = 1");
-    const relations = await all(
-      "SELECT id, left_element, right_element, position FROM relations ORDER BY position ASC"
-    );
-
-    const elements = state.length ? JSON.parse(state[0].elements_json) : [];
-
-    res.json({
-      elements,
-      relations,
-      total: relations.length,
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to load state." });
-  }
-});
-
-// Erzeugt aus den übergebenen Elementen alle Relationen neu und speichert sie atomar.
-app.post("/api/generate", async (req, res) => {
-  try {
-    const elements = normalizeElements(req.body?.elements);
-    const pairs = buildUniquePairs(elements);
-
-    console.log(`/api/generate with elements: ${JSON.stringify(elements)}, pairs are ${JSON.stringify(pairs)}`);
-
-    await run("BEGIN TRANSACTION");
-    await run("DELETE FROM relations");
-
-    for (const pair of pairs) {
-      await run(
-        "INSERT INTO relations (left_element, right_element, position) VALUES (?, ?, ?)",
-        [pair.left, pair.right, pair.position]
-      );
-    }
-
-    await run(
-      "UPDATE app_state SET elements_json = ?, updated_at = datetime('now') WHERE id = 1",
-      [JSON.stringify(elements)]
-    );
-    await run("COMMIT");
-
-    const relations = await all(
-      "SELECT id, left_element, right_element, position FROM relations ORDER BY position ASC"
-    );
-
-    res.json({
-      elements,
-      relations,
-      total: relations.length,
-    });
-  } catch (error) {
-    try {
-      await run("ROLLBACK");
-    } catch (rollbackError) {
-      // no-op
-    }
-    res.status(500).json({ error: "Failed to generate relations." });
-  }
-});
-
-// Übernimmt eine neue Reihenfolge der Relationen und persistiert die Positionen.
-app.post("/api/reorder", async (req, res) => {
-  try {
-    const orderedIds = Array.isArray(req.body?.orderedIds) ? req.body.orderedIds : [];
-
-    console.log(`/api/reorder with ${JSON.stringify(orderedIds)}`);
-
-    const current = await all("SELECT id FROM relations ORDER BY position ASC");
-    if (orderedIds.length !== current.length) {
-      res.status(400).json({ error: "Invalid relation count for reorder." });
-      return;
-    }
-
-    const validIds = new Set(current.map((row) => row.id));
-    const uniqueCheck = new Set();
-    for (const id of orderedIds) {
-      if (!validIds.has(id) || uniqueCheck.has(id)) {
-        res.status(400).json({ error: "Invalid relation ids for reorder." });
-        return;
-      }
-      uniqueCheck.add(id);
-    }
-
-    await run("BEGIN TRANSACTION");
-    for (let index = 0; index < orderedIds.length; index += 1) {
-      await run("UPDATE relations SET position = ? WHERE id = ?", [index, orderedIds[index]]);
-    }
-    await run("COMMIT");
-
-    const relations = await all(
-      "SELECT id, left_element, right_element, position FROM relations ORDER BY position ASC"
-    );
-
-    res.json({ relations, total: relations.length });
-  } catch (error) {
-    try {
-      await run("ROLLBACK");
-    } catch (rollbackError) {
-      // no-op
-    }
-    res.status(500).json({ error: "Failed to persist reorder." });
   }
 });
 

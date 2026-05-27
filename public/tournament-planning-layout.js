@@ -4,9 +4,13 @@
  * and a right-side control panel with three multi-select controls for
  * phases, groups/matches per phase, and fields.
  * @param {HTMLElement} mount Container element to mount into.
- * @returns {{ phaseSelect: HTMLSelectElement, groupSelect: HTMLSelectElement, fieldSelect: HTMLSelectElement, generateButton: HTMLButtonElement, pauseButton: HTMLButtonElement, assignRefereesButton: HTMLButtonElement, gridArea: HTMLElement }}
+ * @param {{ placeholderText?: string, readOnly?: boolean }} [options] Optional label and behavior overrides.
+ * @returns {{ phaseSelect: HTMLSelectElement|null, groupSelect: HTMLSelectElement|null, fieldSelect: HTMLSelectElement|null, generateButton: HTMLButtonElement|null, pauseButton: HTMLButtonElement|null, assignRefereesButton: HTMLButtonElement|null, gridArea: HTMLElement, readOnly: boolean }}
  */
-export function mountTournamentPlanningLayout(mount) {
+export function mountTournamentPlanningLayout(mount, options = {}) {
+  const placeholderText = options.placeholderText || "Spielplanung wird hier angezeigt";
+  const readOnly = options.readOnly === true;
+
   mount.innerHTML = "";
 
   const layout = document.createElement("div");
@@ -17,49 +21,60 @@ export function mountTournamentPlanningLayout(mount) {
 
   const placeholderEl = document.createElement("div");
   placeholderEl.className = "placeholder-box tp-grid-placeholder";
-  placeholderEl.textContent = "Spielplan wird hier angezeigt";
+  placeholderEl.textContent = placeholderText;
   gridArea.appendChild(placeholderEl);
-  const panel = document.createElement("aside");
-  panel.className = "tp-control-panel";
+  let phaseGroup = null;
+  let groupGroup = null;
+  let fieldGroup = null;
+  let generateButton = null;
+  let pauseButton = null;
+  let assignRefereesButton = null;
 
-  const phaseGroup = createControlGroup("tp-phase-select", "Phase");
-  const groupGroup = createControlGroup("tp-group-select", "Gruppe / Match");
-  const fieldGroup = createControlGroup("tp-field-select", "Feld");
+  if (!readOnly) {
+    const panel = document.createElement("aside");
+    panel.className = "tp-control-panel";
 
-  panel.appendChild(phaseGroup.wrapper);
-  panel.appendChild(groupGroup.wrapper);
-  panel.appendChild(fieldGroup.wrapper);
+    phaseGroup = createControlGroup("tp-phase-select", "Phase");
+    groupGroup = createControlGroup("tp-group-select", "Gruppe / Match");
+    fieldGroup = createControlGroup("tp-field-select", "Feld");
 
-  const generateButton = document.createElement("button");
-  generateButton.type = "button";
-  generateButton.className = "tp-generate-btn";
-  generateButton.textContent = "Matches generieren";
-  panel.appendChild(generateButton);
+    panel.appendChild(phaseGroup.wrapper);
+    panel.appendChild(groupGroup.wrapper);
+    panel.appendChild(fieldGroup.wrapper);
 
-  const pauseButton = document.createElement("button");
-  pauseButton.type = "button";
-  pauseButton.className = "tp-pause-btn";
-  pauseButton.textContent = "Pause einfuegen";
-  panel.appendChild(pauseButton);
+    generateButton = document.createElement("button");
+    generateButton.type = "button";
+    generateButton.className = "tp-generate-btn";
+    generateButton.textContent = "Matches generieren";
+    panel.appendChild(generateButton);
 
-  const assignRefereesButton = document.createElement("button");
-  assignRefereesButton.type = "button";
-  assignRefereesButton.className = "tp-assign-referees-btn";
-  assignRefereesButton.textContent = "Schiedsrichter zuweisen";
-  panel.appendChild(assignRefereesButton);
+    pauseButton = document.createElement("button");
+    pauseButton.type = "button";
+    pauseButton.className = "tp-pause-btn";
+    pauseButton.textContent = "Pause einfuegen";
+    panel.appendChild(pauseButton);
+
+    assignRefereesButton = document.createElement("button");
+    assignRefereesButton.type = "button";
+    assignRefereesButton.className = "tp-assign-referees-btn";
+    assignRefereesButton.textContent = "Schiedsrichter zuweisen";
+    panel.appendChild(assignRefereesButton);
+
+    layout.appendChild(panel);
+  }
 
   layout.appendChild(gridArea);
-  layout.appendChild(panel);
   mount.appendChild(layout);
 
   return {
-    phaseSelect: phaseGroup.select,
-    groupSelect: groupGroup.select,
-    fieldSelect: fieldGroup.select,
+    phaseSelect: phaseGroup?.select || null,
+    groupSelect: groupGroup?.select || null,
+    fieldSelect: fieldGroup?.select || null,
     generateButton,
     pauseButton,
     assignRefereesButton,
     gridArea,
+    readOnly,
   };
 }
 
@@ -210,15 +225,17 @@ export function readSelectedPhaseIds(phaseSelect) {
  * @param {Array<object>} matches All match records to display.
  * @param {Array<{id: number, name: string}>} phases All phases for name lookup.
  * @param {Array<{id: number, name: string}>} teamsWithIds Teams for name lookup.
+ * @param {{ readOnly?: boolean }} [options] Optional render behavior flags.
  * @returns {void}
  */
-export function renderMatchGrid(gridArea, matches, phases, teamsWithIds) {
+export function renderMatchGrid(gridArea, matches, phases, teamsWithIds, options = {}) {
+  const readOnly = options.readOnly === true;
   gridArea.innerHTML = "";
 
   if (!Array.isArray(matches) || matches.length === 0) {
     const placeholder = document.createElement("div");
     placeholder.className = "placeholder-box tp-grid-placeholder";
-    placeholder.textContent = "Spielplan wird hier angezeigt";
+    placeholder.textContent = "Spielplanung wird hier angezeigt";
     gridArea.appendChild(placeholder);
     return;
   }
@@ -235,8 +252,10 @@ export function renderMatchGrid(gridArea, matches, phases, teamsWithIds) {
   );
   const phaseIndexById = new Map(phases.map((phase, index) => [Number(phase.id), index]));
 
-  const phaseActions = buildPhaseActions(matches, phaseNameById);
-  gridArea.appendChild(phaseActions);
+  if (!readOnly) {
+    const phaseActions = buildPhaseActions(matches, phaseNameById);
+    gridArea.appendChild(phaseActions);
+  }
 
   const matchesByPhase = new Map();
   matches.forEach((match) => {
@@ -258,7 +277,7 @@ export function renderMatchGrid(gridArea, matches, phases, teamsWithIds) {
     }
 
     const phaseName = phaseNameById.get(phaseId) || `Phase ${phaseId}`;
-    const section = buildPhaseSection(phaseName, phaseMatches, teamNameById, phaseNameById);
+    const section = buildPhaseSection(phaseName, phaseMatches, teamNameById, phaseNameById, readOnly);
     gridArea.appendChild(section);
   });
 }
@@ -295,9 +314,10 @@ function buildPhaseActions(matches, phaseNameById) {
  * @param {Array<object>} matches Match records for a single phase.
  * @param {Map<number, string>} teamNameById Team id to name lookup.
  * @param {Map<number, string>} phaseNameById Phase id to name lookup.
+ * @param {boolean} readOnly Whether the rendered board must be non-editable.
  * @returns {HTMLElement} Completed phase section container.
  */
-function buildPhaseSection(phaseName, matches, teamNameById, phaseNameById) {
+function buildPhaseSection(phaseName, matches, teamNameById, phaseNameById, readOnly) {
   const section = document.createElement("section");
   section.className = "tp-phase-section";
 
@@ -388,7 +408,7 @@ function buildPhaseSection(phaseName, matches, teamNameById, phaseNameById) {
 
       const cellMatches = matchLookup.get(`${time}|${fieldNumber}`) || [];
       cellMatches.forEach((match) => {
-        cardsWrap.appendChild(buildMatchCard(match, teamNameById, phaseNameById));
+        cardsWrap.appendChild(buildMatchCard(match, teamNameById, phaseNameById, readOnly));
       });
 
       slot.appendChild(cardsWrap);
@@ -406,9 +426,10 @@ function buildPhaseSection(phaseName, matches, teamNameById, phaseNameById) {
  * @param {object} match Match record from the backend.
  * @param {Map<number, string>} teamNameById Team id to name lookup.
  * @param {Map<number, string>} phaseNameById Phase id to name lookup.
+ * @param {boolean} readOnly Whether interaction controls should be hidden.
  * @returns {HTMLElement} Match card article element.
  */
-function buildMatchCard(match, teamNameById, phaseNameById) {
+function buildMatchCard(match, teamNameById, phaseNameById, readOnly) {
   const isPause = String(match.entry_type || "match") === "pause";
   const card = document.createElement("article");
   card.className = `tp-match-card${match.is_finished ? " is-finished" : ""}${isPause ? " is-pause" : ""}`;
@@ -416,7 +437,7 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
   card.dataset.phaseId = String(match.phase_id || "");
   card.dataset.field = String(match.field_number || "");
   card.dataset.time = match.start_time || "";
-  card.draggable = !isPause;
+  card.draggable = !isPause && !readOnly;
 
   if (isPause) {
     const pauseMeta = document.createElement("div");
@@ -433,17 +454,18 @@ function buildMatchCard(match, teamNameById, phaseNameById) {
     pauseRefId.className = "tp-card-match-number";
     pauseRefId.textContent = `#${match.id || "neu"}`;
 
-    const deletePauseButton = document.createElement("button");
-    deletePauseButton.type = "button";
-    deletePauseButton.className = "tp-card-delete-btn";
-    deletePauseButton.dataset.action = "delete-pause";
-    deletePauseButton.dataset.matchId = String(match.id || "");
-    deletePauseButton.textContent = "🗑";
-    deletePauseButton.title = "Pause loeschen";
-    deletePauseButton.setAttribute("aria-label", "Pause loeschen");
-
     pauseMetaRight.appendChild(pauseRefId);
-    pauseMetaRight.appendChild(deletePauseButton);
+    if (!readOnly) {
+      const deletePauseButton = document.createElement("button");
+      deletePauseButton.type = "button";
+      deletePauseButton.className = "tp-card-delete-btn";
+      deletePauseButton.dataset.action = "delete-pause";
+      deletePauseButton.dataset.matchId = String(match.id || "");
+      deletePauseButton.textContent = "🗑";
+      deletePauseButton.title = "Pause loeschen";
+      deletePauseButton.setAttribute("aria-label", "Pause loeschen");
+      pauseMetaRight.appendChild(deletePauseButton);
+    }
 
     pauseMeta.appendChild(pauseBadge);
     pauseMeta.appendChild(pauseMetaRight);
