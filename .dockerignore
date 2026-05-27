@@ -1,0 +1,9 @@
+npm-debug.log
+.git
+.github
+.vscode
+
+# Local runtime data (persist via volume in docker-compose)
+data/*.db
+
+# Misc local files

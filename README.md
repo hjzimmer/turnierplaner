@@ -86,6 +86,30 @@ PORT=3001 npm start
 - SQLite-Datei: `data/app.db`
 - Startskripte: `npm start` und `npm run dev` (beide starten aktuell `node server.js`)
 
+### Docker
+
+Container bauen und starten:
+
+```bash
+docker compose up --build -d
+```
+
+Logs anzeigen:
+
+```bash
+docker compose logs -f
+```
+
+Container stoppen:
+
+```bash
+docker compose down
+```
+
+Hinweis zur Datenpersistenz:
+- Die SQLite-Datenbank wird ueber den lokalen Ordner `./data` nach `/app/data` gemountet.
+- Dadurch nutzt der Container dieselbe `data/app.db` wie die lokale App.
+
 ## Offene Punkte
 
 Die folgenden Punkte sind als moegliche Weiterentwicklungen sinnvoll:
