@@ -53,6 +53,22 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+.topbar-logo {
+  width: 72px;
+  height: 52px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.topbar-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 7px rgba(24, 35, 51, 0.16));
+}
+
 .nav-toggle {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -290,6 +306,20 @@ body {
   padding-top: 0.1rem;
 }
 
+.password-actions {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.password-actions-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .save-status {
   color: var(--muted);
   font-weight: 600;
@@ -317,6 +347,21 @@ body {
 
 .save-btn:not(:disabled):hover {
   filter: brightness(0.95);
+}
+
+.secondary-btn {
+  border: 1px solid #b7c7dc;
+  border-radius: 10px;
+  min-height: 40px;
+  padding: 0.5rem 0.9rem;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: #eef4fb;
 }
 
 .scoring-mode-options {

@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 
@@ -74,6 +75,7 @@ async function createSetupTable() {
       pause_between_matches INTEGER NOT NULL,
       lunch_break_time TEXT NOT NULL,
       lunch_break_duration INTEGER NOT NULL,
+      app_password_hash TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL
     )
   `);
@@ -148,9 +150,10 @@ async function ensureSetupRow() {
         pause_between_matches,
         lunch_break_time,
         lunch_break_duration,
+        app_password_hash,
         updated_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      setupSettingsToSqlParams(getDefaultTournamentSettings())
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      [...setupSettingsToSqlParams(getDefaultTournamentSettings()), ""]
     );
   }
 }
@@ -281,6 +284,12 @@ async function initializeDatabase() {
 
   await createSetupTable();
 
+  try {
+    await run("ALTER TABLE setup ADD COLUMN app_password_hash TEXT NOT NULL DEFAULT ''");
+  } catch (_) {
+    // Column already present.
+  }
+
   await run(`
     CREATE TABLE IF NOT EXISTS scoring_mode_state (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -408,6 +417,87 @@ function getDefaultTournamentSettings() {
  */
 function normalizeString(value) {
   return String(value || "").trim();
+}
+
+/**
+ * Converts raw password input to a string without trimming.
+ * @param {*} value Raw password input.
+ * @returns {string} Password input as string.
+ */
+function normalizePasswordInput(value) {
+  return typeof value === "string" ? value : String(value || "");
+}
+
+/**
+ * Returns whether a stored hash value is set and non-empty.
+ * @param {*} value Stored hash value.
+ * @returns {boolean} True when password hash exists.
+ */
+function hasStoredPasswordHash(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+/**
+ * Creates a salted scrypt hash for one plaintext password.
+ * @param {string} password Plaintext password.
+ * @returns {string} Stored hash format: scrypt$<saltHex>$<hashHex>.
+ */
+function createPasswordHash(password) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 64);
+  return `scrypt$${salt.toString("hex")}$${hash.toString("hex")}`;
+}
+
+/**
+ * Verifies one plaintext password against a stored hash.
+ * @param {string} password Plaintext password.
+ * @param {string} storedHash Stored hash string.
+ * @returns {boolean} True when password is valid.
+ */
+function verifyPasswordHash(password, storedHash) {
+  if (!hasStoredPasswordHash(storedHash)) {
+    return false;
+  }
+
+  const parts = String(storedHash).split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt") {
+    return false;
+  }
+
+  const saltHex = parts[1];
+  const expectedHashHex = parts[2];
+  if (!saltHex || !expectedHashHex) {
+    return false;
+  }
+
+  let salt;
+  let expectedHash;
+  try {
+    salt = Buffer.from(saltHex, "hex");
+    expectedHash = Buffer.from(expectedHashHex, "hex");
+  } catch {
+    return false;
+  }
+
+  if (expectedHash.length === 0) {
+    return false;
+  }
+
+  const actualHash = crypto.scryptSync(password, salt, expectedHash.length);
+  if (actualHash.length !== expectedHash.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(actualHash, expectedHash);
+}
+
+/**
+ * Loads the currently stored app password hash.
+ * @returns {Promise<string>} Stored password hash or empty string.
+ */
+async function loadStoredAppPasswordHash() {
+  const row = await get("SELECT app_password_hash FROM setup WHERE id = 1");
+  return typeof row?.app_password_hash === "string" ? row.app_password_hash : "";
 }
 
 /**
@@ -1698,6 +1788,117 @@ async function loadPlacementsWithEntries() {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
+/**
+ * Returns whether an app access password is already configured.
+ * @returns {Promise<void>} Sends password configuration status.
+ */
+app.get("/api/access-password/status", async (req, res) => {
+  try {
+    const storedHash = await loadStoredAppPasswordHash();
+    res.json({ is_set: hasStoredPasswordHash(storedHash) });
+  } catch {
+    res.status(500).json({ error: "Failed to load password status." });
+  }
+});
+
+/**
+ * Stores an app access password when none exists yet.
+ * @param {string} req.body.password Password to store.
+ * @returns {Promise<void>} Sends password set confirmation.
+ */
+app.put("/api/access-password", async (req, res) => {
+  try {
+    const rawPassword = normalizePasswordInput(req.body?.password);
+    if (rawPassword.length === 0) {
+      res.status(400).json({ error: "Password must not be empty." });
+      return;
+    }
+
+    const currentHash = await loadStoredAppPasswordHash();
+    if (hasStoredPasswordHash(currentHash)) {
+      res.status(409).json({ error: "Password is already set." });
+      return;
+    }
+
+    const nextHash = createPasswordHash(rawPassword);
+    await run(
+      "UPDATE setup SET app_password_hash = ?, updated_at = datetime('now') WHERE id = 1",
+      [nextHash]
+    );
+
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed to set password." });
+  }
+});
+
+/**
+ * Verifies a plaintext password against the stored app access password.
+ * @param {string} req.body.password Password to verify.
+ * @returns {Promise<void>} Sends verification result.
+ */
+app.post("/api/access-password/verify", async (req, res) => {
+  try {
+    const rawPassword = normalizePasswordInput(req.body?.password);
+    const currentHash = await loadStoredAppPasswordHash();
+    if (!hasStoredPasswordHash(currentHash)) {
+      res.status(409).json({ error: "Password is not set yet.", is_set: false });
+      return;
+    }
+
+    const isValid = rawPassword.length > 0 && verifyPasswordHash(rawPassword, currentHash);
+    if (!isValid) {
+      res.status(401).json({ ok: false, error: "Invalid password." });
+      return;
+    }
+
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed to verify password." });
+  }
+});
+
+/**
+ * Changes the app access password.
+ * Requires current password verification when a password is already set.
+ * @param {string} req.body.current_password Current plaintext password.
+ * @param {string} req.body.new_password New plaintext password.
+ * @returns {Promise<void>} Sends password change confirmation.
+ */
+app.post("/api/access-password/change", async (req, res) => {
+  try {
+    const currentPassword = normalizePasswordInput(req.body?.current_password);
+    const newPassword = normalizePasswordInput(req.body?.new_password);
+
+    if (newPassword.length === 0) {
+      res.status(400).json({ error: "New password must not be empty." });
+      return;
+    }
+
+    const currentHash = await loadStoredAppPasswordHash();
+    const hasExistingPassword = hasStoredPasswordHash(currentHash);
+
+    if (hasExistingPassword) {
+      const isValidCurrentPassword =
+        currentPassword.length > 0 && verifyPasswordHash(currentPassword, currentHash);
+      if (!isValidCurrentPassword) {
+        res.status(401).json({ error: "Invalid current password." });
+        return;
+      }
+    }
+
+    const nextHash = createPasswordHash(newPassword);
+    await run(
+      "UPDATE setup SET app_password_hash = ?, updated_at = datetime('now') WHERE id = 1",
+      [nextHash]
+    );
+
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed to change password." });
+  }
+});
+
 app.get("/api/setup", async (req, res) => {
   try {
     const row = await get(
@@ -2703,7 +2904,7 @@ initializeDatabase()
   .then(() => {
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
-      console.log(`Relation cards app running on http://localhost:${PORT}`);
+      console.log(`Turnierplaner running on http://localhost:${PORT}`);
     });
   })
   .catch((error) => {

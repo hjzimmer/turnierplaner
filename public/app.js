@@ -9,13 +9,17 @@ import {
 } from "./calculations.js";
 import {
   loadPhases,
+  loadAccessPasswordStatus,
+  changeAccessPassword,
   loadScoringMode,
   loadTeams,
   loadTournamentSettings,
   savePhases,
+  setAccessPassword,
   saveScoringMode,
   saveTeams,
   saveTournamentSettings,
+  verifyAccessPassword,
 } from "./data-store.js";
 import {
   addPhaseColumn,
@@ -78,11 +82,15 @@ import { renderMatchGrid } from "./tournament-planning-layout.js";
 const appLayout = document.getElementById("appLayout");
 const navToggle = document.getElementById("navToggle");
 const sidebarBackdrop = document.getElementById("sidebarBackdrop");
+const topbarLogo = document.getElementById("topbarLogo");
+const topbarLogoImage = document.getElementById("topbarLogoImage");
+const topbarTitle = document.querySelector(".title-block h1");
+const topbarSubtitle = document.querySelector(".title-block p");
 const menuGroups = [...document.querySelectorAll(".menu-group")];
 const levelOneButtons = [...document.querySelectorAll(".menu-btn.level-1")];
 const menuButtons = [...document.querySelectorAll(".menu-btn.level-2")];
 const sections = [...document.querySelectorAll(".content-section")];
-const LAST_ACTIVE_VIEW_STORAGE_KEY = "relation-cards-active-view";
+const LAST_ACTIVE_VIEW_STORAGE_KEY = "turnierplaner-active-view";
 const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
 const phaseConfigMount = document.getElementById("phaseConfigMount");
@@ -127,6 +135,10 @@ let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
 let activeMatchResultDialog = null;
 let persistedScoringModeKey = "vereinfachter_turniermodus";
+let hasUnlockedProtectedViews = false;
+
+const UNPROTECTED_VIEW_NAMES = new Set(["turnierergebnisse", "turnieruebersicht"]);
+const PROTECTED_ACCESS_STORAGE_KEY = "turnierplaner-protected-access";
 
 /**
  * Iterates over all mounted tournament planning views.
@@ -231,6 +243,78 @@ function syncBackdrop() {
 }
 
 /**
+ * Updates the topbar logo from tournament settings.
+ * @param {object} settings Settings object that may contain logo and tournament_name.
+ * @returns {void}
+ */
+function updateTopbarLogo(settings) {
+  if (!topbarLogo || !topbarLogoImage) {
+    return;
+  }
+
+  const logoUrl = String(settings?.logo || "").trim();
+  if (!logoUrl) {
+    topbarLogo.hidden = true;
+    topbarLogoImage.removeAttribute("src");
+    topbarLogoImage.removeAttribute("alt");
+    return;
+  }
+
+  const tournamentName = String(settings?.tournament_name || "").trim();
+  topbarLogoImage.alt = tournamentName ? `Logo: ${tournamentName}` : "Turnierlogo";
+  topbarLogoImage.src = logoUrl;
+  topbarLogo.hidden = false;
+}
+
+/**
+ * Updates the topbar title from tournament settings.
+ * @param {object} settings Settings object that may contain tournament_name.
+ * @returns {void}
+ */
+function updateTopbarTitle(settings) {
+  if (!topbarTitle) {
+    return;
+  }
+
+  const tournamentName = String(settings?.tournament_name || "").trim();
+  topbarTitle.textContent = tournamentName || "Turnier";
+}
+
+/**
+ * Converts an ISO date string (YYYY-MM-DD) to a German display date.
+ * @param {string} isoDateValue ISO date value.
+ * @returns {string} Formatted date or "-" if invalid.
+ */
+function formatGermanDate(isoDateValue) {
+  const value = String(isoDateValue || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return "-";
+  }
+
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) {
+    return "-";
+  }
+  return `${day}.${month}.${year}`;
+}
+
+/**
+ * Updates the subtitle under the topbar title with date and start time.
+ * @param {object} settings Settings object that may contain tournament_date and tournament_time.
+ * @returns {void}
+ */
+function updateTopbarSubtitle(settings) {
+  if (!topbarSubtitle) {
+    return;
+  }
+
+  const dateLabel = formatGermanDate(settings?.tournament_date);
+  const timeValue = String(settings?.tournament_time || "").trim();
+  const timeLabel = timeValue || "-";
+  topbarSubtitle.textContent = `${dateLabel} | ${timeLabel}`;
+}
+
+/**
  * Toggles the sidebar state for desktop and mobile layouts.
  * @returns {void}
  */
@@ -292,8 +376,7 @@ function getAvailableViewNames() {
  * @returns {string} Default view name.
  */
 function getDefaultViewName() {
-  const firstMenuView = String(menuButtons[0]?.dataset?.view || "").trim();
-  return firstMenuView || "turniersetup";
+  return "turnierergebnisse";
 }
 
 /**
@@ -337,13 +420,50 @@ function loadPersistedActiveViewName() {
 }
 
 /**
- * Activates one content view and updates active menu styling.
- * @param {string} viewName Target view identifier.
+ * Returns whether one view requires password authorization.
+ * @param {string} viewName View name to inspect.
+ * @returns {boolean} True when the view is password-protected.
+ */
+function isProtectedViewName(viewName) {
+  const normalizedViewName = String(viewName || "").trim();
+  return normalizedViewName.length > 0 && !UNPROTECTED_VIEW_NAMES.has(normalizedViewName);
+}
+
+/**
+ * Loads a persisted protected-access unlock flag from session storage.
+ * @returns {boolean} True when protected access is already unlocked.
+ */
+function loadProtectedAccessFlag() {
+  try {
+    return window.sessionStorage.getItem(PROTECTED_ACCESS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persists the protected-access unlock flag in session storage.
+ * @param {boolean} value Unlock state to persist.
  * @returns {void}
  */
-function openView(viewName) {
-  const targetViewName = resolveViewName(viewName);
+function persistProtectedAccessFlag(value) {
+  try {
+    if (value) {
+      window.sessionStorage.setItem(PROTECTED_ACCESS_STORAGE_KEY, "1");
+      return;
+    }
+    window.sessionStorage.removeItem(PROTECTED_ACCESS_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+}
 
+/**
+ * Applies one resolved view to menu and section visibility state.
+ * @param {string} targetViewName Resolved target view identifier.
+ * @returns {void}
+ */
+function applyActiveView(targetViewName) {
   menuButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === targetViewName);
   });
@@ -367,6 +487,262 @@ function openView(viewName) {
     appLayout.classList.remove("is-open-mobile");
     syncBackdrop();
   }
+}
+
+/**
+ * Shows one password input dialog inside the app shell.
+ * @param {{title: string, message: string, confirmText?: string, cancelText?: string}} options Dialog configuration.
+ * @returns {Promise<string|null>} Entered password or null when cancelled.
+ */
+function showPasswordDialog(options) {
+  const title = String(options?.title || "Passwort");
+  const message = String(options?.message || "Bitte Passwort eingeben.");
+  const confirmText = String(options?.confirmText || "OK");
+  const cancelText = String(options?.cancelText || "Abbrechen");
+
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.style.position = "fixed";
+    backdrop.style.inset = "0";
+    backdrop.style.background = "rgba(0, 0, 0, 0.45)";
+    backdrop.style.display = "flex";
+    backdrop.style.alignItems = "center";
+    backdrop.style.justifyContent = "center";
+    backdrop.style.zIndex = "9999";
+
+    const card = document.createElement("div");
+    card.style.width = "min(460px, calc(100vw - 2rem))";
+    card.style.background = "#fff";
+    card.style.borderRadius = "12px";
+    card.style.padding = "1rem";
+    card.style.boxShadow = "0 16px 40px rgba(0, 0, 0, 0.25)";
+
+    const heading = document.createElement("h3");
+    heading.textContent = title;
+    heading.style.margin = "0 0 0.5rem";
+
+    const text = document.createElement("p");
+    text.textContent = message;
+    text.style.margin = "0 0 0.75rem";
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.autocomplete = "new-password";
+    input.style.width = "100%";
+    input.style.border = "1px solid #c7cfdd";
+    input.style.borderRadius = "8px";
+    input.style.padding = "0.55rem 0.65rem";
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.justifyContent = "flex-end";
+    actions.style.gap = "0.5rem";
+    actions.style.marginTop = "0.85rem";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.textContent = cancelText;
+
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.textContent = confirmText;
+
+    actions.appendChild(cancelButton);
+    actions.appendChild(confirmButton);
+    card.appendChild(heading);
+    card.appendChild(text);
+    card.appendChild(input);
+    card.appendChild(actions);
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+
+    let isClosed = false;
+
+    /**
+     * Closes and removes the password dialog.
+     * @param {string|null} value Dialog result value.
+     * @returns {void}
+     */
+    function closeDialog(value) {
+      if (isClosed) {
+        return;
+      }
+      isClosed = true;
+      document.removeEventListener("keydown", onKeyDown);
+      backdrop.remove();
+      resolve(value);
+    }
+
+    /**
+     * Handles keyboard shortcuts for the password dialog.
+     * @param {KeyboardEvent} event Keyboard event.
+     * @returns {void}
+     */
+    function onKeyDown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDialog(null);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        closeDialog(String(input.value || ""));
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    cancelButton.addEventListener("click", () => closeDialog(null));
+    confirmButton.addEventListener("click", () => closeDialog(String(input.value || "")));
+
+    requestAnimationFrame(() => {
+      input.focus();
+    });
+  });
+}
+
+/**
+ * Guides the user through creating an initial app password.
+ * @returns {Promise<boolean>} True when password setup is completed.
+ */
+async function ensureInitialPasswordIsSet() {
+  while (true) {
+    const firstInput = await showPasswordDialog({
+      title: "Passwort festlegen",
+      message: "Kein Passwort gesetzt. Bitte jetzt ein Passwort vergeben.",
+      confirmText: "Speichern",
+    });
+    if (firstInput === null) {
+      return false;
+    }
+
+    const password = String(firstInput);
+    if (password.length === 0) {
+      window.alert("Passwort darf nicht leer sein.");
+      continue;
+    }
+
+    const confirmInput = await showPasswordDialog({
+      title: "Passwort bestaetigen",
+      message: "Bitte Passwort erneut eingeben.",
+      confirmText: "Bestaetigen",
+    });
+    if (confirmInput === null) {
+      return false;
+    }
+
+    if (String(confirmInput) !== password) {
+      window.alert("Passwoerter stimmen nicht ueberein.");
+      continue;
+    }
+
+    try {
+      await setAccessPassword(password);
+      return true;
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Passwort konnte nicht gespeichert werden.");
+      return false;
+    }
+  }
+}
+
+/**
+ * Prompts until a valid password is entered or the user cancels.
+ * @returns {Promise<boolean>} True when password verification succeeded.
+ */
+async function verifyPasswordWithPromptLoop() {
+  while (true) {
+    const input = await showPasswordDialog({
+      title: "Passwort erforderlich",
+      message: "Bitte Passwort eingeben, um fortzufahren.",
+      confirmText: "Pruefen",
+    });
+    if (input === null) {
+      return false;
+    }
+
+    const password = String(input);
+    if (password.length === 0) {
+      window.alert("Passwort darf nicht leer sein.");
+      continue;
+    }
+
+    try {
+      const result = await verifyAccessPassword(password);
+      if (result.ok) {
+        return true;
+      }
+      window.alert("Falsches Passwort.");
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Passwort konnte nicht geprueft werden.");
+      return false;
+    }
+  }
+}
+
+/**
+ * Ensures protected views can only be opened after successful password setup/verification.
+ * @returns {Promise<boolean>} True when protected access is unlocked.
+ */
+async function ensureProtectedAccessGranted() {
+  if (hasUnlockedProtectedViews) {
+    return true;
+  }
+
+  const unlockedFromSession = loadProtectedAccessFlag();
+  if (unlockedFromSession) {
+    hasUnlockedProtectedViews = true;
+    return true;
+  }
+
+  let status;
+  try {
+    status = await loadAccessPasswordStatus();
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Passwort-Status konnte nicht geladen werden.");
+    return false;
+  }
+
+  if (!status.is_set) {
+    const wasSet = await ensureInitialPasswordIsSet();
+    if (!wasSet) {
+      return false;
+    }
+  }
+
+  const isVerified = await verifyPasswordWithPromptLoop();
+  if (!isVerified) {
+    return false;
+  }
+
+  hasUnlockedProtectedViews = true;
+  persistProtectedAccessFlag(true);
+  return true;
+}
+
+/**
+ * Activates one content view and updates active menu styling.
+ * @param {string} viewName Target view identifier.
+ * @returns {Promise<boolean>} True when the view was opened.
+ */
+async function openView(viewName) {
+  const targetViewName = resolveViewName(viewName);
+  const requiresAccess = isProtectedViewName(targetViewName);
+
+  if (requiresAccess) {
+    let isGranted = false;
+    try {
+      isGranted = await ensureProtectedAccessGranted();
+    } catch {
+      isGranted = false;
+    }
+    if (!isGranted) {
+      applyActiveView("turnierergebnisse");
+      return false;
+    }
+  }
+
+  applyActiveView(targetViewName);
+  return true;
 }
 
 /**
@@ -432,11 +808,17 @@ async function initializeTournamentSettings() {
     const loaded = await loadTournamentSettings();
     persistedSettings = loaded;
     writeTournamentSettingsToForm(settingsUi.form, loaded);
+    updateTopbarTitle(loaded);
+    updateTopbarSubtitle(loaded);
+    updateTopbarLogo(loaded);
     setSaveStatus(settingsUi.saveStatus, "Einstellungen geladen");
     updateDirtyState();
   } catch (error) {
     persistedSettings = getDefaultTournamentSettings();
     writeTournamentSettingsToForm(settingsUi.form, persistedSettings);
+    updateTopbarTitle(persistedSettings);
+    updateTopbarSubtitle(persistedSettings);
+    updateTopbarLogo(persistedSettings);
     setSaveStatus(settingsUi.saveStatus, "Standardwerte geladen", true);
     updateDirtyState();
   }
@@ -3753,7 +4135,7 @@ sidebarBackdrop.addEventListener("click", () => {
 
 menuButtons.forEach((button) => {
   button.addEventListener("click", () => {
-    openView(button.dataset.view);
+    void openView(button.dataset.view);
   });
 });
 
@@ -3771,6 +4153,9 @@ settingsUi.form.addEventListener("submit", async (event) => {
     const saved = await saveTournamentSettings(draft);
     persistedSettings = saved;
     writeTournamentSettingsToForm(settingsUi.form, saved);
+    updateTopbarTitle(saved);
+    updateTopbarSubtitle(saved);
+    updateTopbarLogo(saved);
     setSaveStatus(settingsUi.saveStatus, "Gespeichert");
     updateDirtyState();
     forEachEditableTournamentPlanningUi((ui) => {
@@ -3779,6 +4164,60 @@ settingsUi.form.addEventListener("submit", async (event) => {
   } catch (error) {
     setSaveStatus(settingsUi.saveStatus, "Speichern fehlgeschlagen", true);
     updateDirtyState();
+  }
+});
+
+settingsUi.changePasswordButton.addEventListener("click", async () => {
+  const currentPassword = String(settingsUi.passwordCurrentInput?.value || "");
+  const newPassword = String(settingsUi.passwordNewInput?.value || "");
+  const confirmPassword = String(settingsUi.passwordConfirmInput?.value || "");
+
+  if (newPassword.length === 0) {
+    setSaveStatus(settingsUi.changePasswordStatus, "Neues Passwort darf nicht leer sein.", true);
+    settingsUi.passwordNewInput?.focus();
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    setSaveStatus(settingsUi.changePasswordStatus, "Passwort-Bestaetigung stimmt nicht ueberein.", true);
+    settingsUi.passwordConfirmInput?.focus();
+    return;
+  }
+
+  setSaveStatus(settingsUi.changePasswordStatus, "Passwort wird geaendert...");
+  settingsUi.changePasswordButton.disabled = true;
+
+  try {
+    const result = await changeAccessPassword(currentPassword, newPassword);
+    if (!result.ok) {
+      throw new Error("Passwort konnte nicht geaendert werden.");
+    }
+
+    settingsUi.passwordCurrentInput.value = "";
+    settingsUi.passwordNewInput.value = "";
+    settingsUi.passwordConfirmInput.value = "";
+    setSaveStatus(settingsUi.changePasswordStatus, "Passwort geaendert");
+  } catch (error) {
+    setSaveStatus(
+      settingsUi.changePasswordStatus,
+      error instanceof Error ? error.message : "Passwort konnte nicht geaendert werden.",
+      true
+    );
+  } finally {
+    settingsUi.changePasswordButton.disabled = false;
+  }
+});
+
+settingsUi.logoutProtectedViewsButton.addEventListener("click", async () => {
+  hasUnlockedProtectedViews = false;
+  persistProtectedAccessFlag(false);
+  setSaveStatus(settingsUi.changePasswordStatus, "Abgemeldet. Geschuetzte Menues sind wieder gesperrt.");
+  await openView("turnierergebnisse");
+});
+
+topbarLogoImage?.addEventListener("error", () => {
+  if (topbarLogo) {
+    topbarLogo.hidden = true;
   }
 });
 
@@ -4113,7 +4552,7 @@ mobileQuery.addEventListener("change", () => {
   syncBackdrop();
 });
 
-openView(loadPersistedActiveViewName() || getDefaultViewName());
+void openView(loadPersistedActiveViewName() || getDefaultViewName());
 initializeTournamentSettings();
 initializeScoringMode();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.

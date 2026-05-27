@@ -162,3 +162,99 @@ export async function saveScoringMode(modeKey) {
     mode_key: payload.mode_key === "offizieller_modus" ? "offizieller_modus" : "vereinfachter_turniermodus",
   };
 }
+
+/**
+ * Loads whether an app access password has already been configured.
+ * @returns {Promise<{is_set: boolean}>} Password status payload.
+ */
+export async function loadAccessPasswordStatus() {
+  const response = await fetch("/api/access-password/status");
+  if (!response.ok) {
+    throw new Error("Passwort-Status konnte nicht geladen werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    is_set: payload?.is_set === true,
+  };
+}
+
+/**
+ * Stores the initial app access password.
+ * @param {string} password Plaintext password.
+ * @returns {Promise<{ok: boolean}>} Password set result.
+ */
+export async function setAccessPassword(password) {
+  const response = await fetch("/api/access-password", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password: String(password || "") }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Passwort konnte nicht gespeichert werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    ok: payload?.ok === true,
+  };
+}
+
+/**
+ * Verifies one plaintext password against the configured app access password.
+ * @param {string} password Plaintext password.
+ * @returns {Promise<{ok: boolean}>} Password verification result.
+ */
+export async function verifyAccessPassword(password) {
+  const response = await fetch("/api/access-password/verify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password: String(password || "") }),
+  });
+
+  if (response.status === 401) {
+    return { ok: false };
+  }
+
+  if (!response.ok) {
+    throw new Error("Passwort konnte nicht geprueft werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    ok: payload?.ok === true,
+  };
+}
+
+/**
+ * Changes the configured app access password.
+ * @param {string} currentPassword Current plaintext password.
+ * @param {string} newPassword New plaintext password.
+ * @returns {Promise<{ok: boolean}>} Password change result.
+ */
+export async function changeAccessPassword(currentPassword, newPassword) {
+  const response = await fetch("/api/access-password/change", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      current_password: String(currentPassword || ""),
+      new_password: String(newPassword || ""),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Passwort konnte nicht geaendert werden.");
+  }
+
+  const payload = await response.json();
+  return {
+    ok: payload?.ok === true,
+  };
+}

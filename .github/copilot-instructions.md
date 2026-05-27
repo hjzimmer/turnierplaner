@@ -1,6 +1,6 @@
-# Copilot Instructions for relation-cards-app
+# Copilot Instructions for turnierplaner
 
-- alle modifikationen sollen ausschließlich im projekt ordner relation-cards-app gemacht werden. alle anderen verzeichnisse werden ignoriert
+- alle modifikationen sollen ausschließlich im projekt ordner turnierplaner gemacht werden. alle anderen verzeichnisse werden ignoriert
 
 ## Project Context
 - Stack: Node.js, Express, SQLite, vanilla HTML/CSS/JavaScript modules.

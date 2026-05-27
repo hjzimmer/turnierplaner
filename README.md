@@ -1,25 +1,109 @@
-# Relation Cards App
+# Turnierplaner
 
-Standalone web application for tournament setup, planning, match entry, and results tracking with SQLite persistence.
+Turnierplaner ist eine lokale Webanwendung zur Planung und Durchfuehrung von Turnieren.
+Die Anwendung bietet einen kompletten Ablauf von der Turnierkonfiguration bis zur Ergebnisauswertung.
+Alle Daten werden in einer SQLite-Datenbank gespeichert.
 
 ## Features
 
-- Tournament setup with date, time, fields, and match timing settings
-- Team management including availability as team and referee
-- Phase and block configuration for group and match-based tournament flows
-- Match scheduling, set entry, and scoring mode persistence
-- Placements and tournament results overview
+### 1. Turniersetup
+- Pflege von Turniername, Logo, Datum und Startzeit.
+- Konfiguration zentraler Spielparameter wie Felder, Sets und Zeitdauern.
+- Verwaltung einer Mittagspause.
+- Passwortschutz fuer geschuetzte Bereiche.
+- Passwort aendern und aktive geschuetzte Session abmelden.
 
-## Run
+### 2. Teamverwaltung
+- Anlegen und Bearbeiten von Teams.
+- Pro Team getrennte Verfuegbarkeit als spielendes Team und als Schiedsrichter.
 
-1. Install dependencies:
+### 3. Turnierkonfiguration
+- Erstellen von Turnierphasen.
+- Konfiguration von Gruppen- und Match-basierten Bloecken.
+- Wahl und Persistenz des Wertungsmodus.
+- Verwaltung von Platzierungen.
 
-   npm install
+### 4. Turnierplanung
+- Planung von Spielen ueber Phasen, Gruppen und Felder.
+- Bearbeitbare Spielplanung in der Planungsansicht.
+- Separate Spielplan-Ansicht als schreibgeschuetzte Uebersicht.
 
-2. Start app:
+### 5. Turnierdurchfuehrung
+- Ergebniseingabe pro Match inklusive Satzdaten.
+- Tabellarische Matchsicht fuer die laufende Durchfuehrung.
 
-   npm start
+### 6. Turnierergebnisse
+- Uebersicht der Ergebnisse je Phase.
+- Darstellung von Gruppentabellen, Matchlisten und Platzierungen.
 
-3. Open in browser:
+## Nutzung
 
-   http://localhost:3000
+Ein sinnvoller Standardablauf ist:
+
+1. In Turniersetup alle Basisdaten und Zeitparameter hinterlegen.
+2. Teams erfassen und die Verfuegbarkeit setzen.
+3. Turnierphasen und Blockstruktur in der Turnierkonfiguration aufbauen.
+4. Wertungsmodus festlegen und Platzierungen konfigurieren.
+5. Spiele in der Spielplanung einteilen.
+6. In der Ergebniseingabe waehrend des Turniers Ergebnisse erfassen.
+7. In Turnierergebnisse die Gesamtuebersicht und Endstaende kontrollieren.
+
+## Running
+
+### Voraussetzungen
+- Node.js 18+ empfohlen.
+- npm.
+
+### Installation
+
+```bash
+npm install
+```
+
+### Start
+
+```bash
+npm start
+```
+
+Die App ist danach standardmaessig erreichbar unter:
+
+```text
+http://localhost:3000
+```
+
+### Alternativer Port
+
+Du kannst einen eigenen Port setzen:
+
+```bash
+PORT=3001 npm start
+```
+
+### Wichtige Laufzeitinfos
+- Server-Entry-Point: `server.js`
+- Frontend: `public/`
+- SQLite-Datei: `data/app.db`
+- Startskripte: `npm start` und `npm run dev` (beide starten aktuell `node server.js`)
+
+## Offene Punkte
+
+Die folgenden Punkte sind als moegliche Weiterentwicklungen sinnvoll:
+
+- konfigurierte Turnierpause beim Spielplan direkt beachten
+- Automatisierte Tests fuer zentrale Workflows (API, Planung, Ergebniseingabe).
+- Exportfunktionen fuer Spielplan und Ergebnisse (z. B. CSV/PDF).
+- Bessere Rollen-/Rechteverwaltung statt globalem Passwortschutz.
+- Verbesserte Validierung und Fehlermeldungen fuer komplexe Turnierkonfigurationen.
+- Deployment- und Backup-Strategie fuer produktive Nutzung.
+
+## Lizenz
+
+Dieses Projekt steht unter der Apache License 2.0.
+
+Freie Nutzung, Veraenderung und Weitergabe sind erlaubt, sofern die Lizenz und die
+Autorenangabe erhalten bleiben.
+
+Volltext: siehe Datei LICENSE.
+
+Zusaetzliche Attribution: siehe Datei NOTICE.

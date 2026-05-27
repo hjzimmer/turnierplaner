@@ -1,7 +1,7 @@
 /**
  * Renders the tournament setup form layout into a mount element.
  * @param {HTMLElement} targetElement DOM node where the layout is inserted.
- * @returns {{form: HTMLFormElement, saveButton: HTMLButtonElement, saveStatus: HTMLElement}} References to key setup UI nodes.
+ * @returns {{form: HTMLFormElement, saveButton: HTMLButtonElement, saveStatus: HTMLElement, passwordCurrentInput: HTMLInputElement, passwordNewInput: HTMLInputElement, passwordConfirmInput: HTMLInputElement, changePasswordButton: HTMLButtonElement, logoutProtectedViewsButton: HTMLButtonElement, changePasswordStatus: HTMLElement}} References to key setup UI nodes.
  */
 export function mountTournamentSettingsLayout(targetElement) {
   targetElement.innerHTML = `
@@ -82,6 +82,33 @@ export function mountTournamentSettingsLayout(targetElement) {
           </div>
         </section>
 
+        <section class="settings-section">
+          <h4>Passwort aendern</h4>
+          <div class="settings-grid">
+            <label class="field-row">
+              <span>Aktuelles Passwort</span>
+              <input id="currentAccessPasswordInput" type="password" autocomplete="current-password" />
+            </label>
+
+            <label class="field-row">
+              <span>Neues Passwort</span>
+              <input id="newAccessPasswordInput" type="password" autocomplete="new-password" />
+            </label>
+
+            <label class="field-row">
+              <span>Neues Passwort bestaetigen</span>
+              <input id="confirmAccessPasswordInput" type="password" autocomplete="new-password" />
+            </label>
+          </div>
+          <div class="password-actions">
+            <span id="changePasswordStatus" class="save-status" aria-live="polite"></span>
+            <div class="password-actions-buttons">
+              <button id="logoutProtectedViewsBtn" class="secondary-btn" type="button">Abmelden</button>
+              <button id="changePasswordBtn" class="save-btn" type="button">Passwort aendern</button>
+            </div>
+          </div>
+        </section>
+
         <footer class="settings-footer">
           <span id="saveStatus" class="save-status" aria-live="polite">Keine Aenderungen</span>
           <button id="saveSettingsBtn" class="save-btn" type="submit" disabled>Speichern</button>
@@ -94,6 +121,12 @@ export function mountTournamentSettingsLayout(targetElement) {
     form: targetElement.querySelector("#tournamentSettingsForm"),
     saveButton: targetElement.querySelector("#saveSettingsBtn"),
     saveStatus: targetElement.querySelector("#saveStatus"),
+    passwordCurrentInput: targetElement.querySelector("#currentAccessPasswordInput"),
+    passwordNewInput: targetElement.querySelector("#newAccessPasswordInput"),
+    passwordConfirmInput: targetElement.querySelector("#confirmAccessPasswordInput"),
+    changePasswordButton: targetElement.querySelector("#changePasswordBtn"),
+    logoutProtectedViewsButton: targetElement.querySelector("#logoutProtectedViewsBtn"),
+    changePasswordStatus: targetElement.querySelector("#changePasswordStatus"),
   };
 }
 

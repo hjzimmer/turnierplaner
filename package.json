@@ -1,7 +1,8 @@
 {
-  "name": "relation-cards-app",
+  "name": "turnierplaner",
   "version": "1.0.0",
   "description": "Browser app to generate pair relations and sort cards with persistence",
+  "license": "Apache-2.0",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
