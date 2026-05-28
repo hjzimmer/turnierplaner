@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
@@ -6,6 +7,7 @@ const sqlite3 = require("sqlite3").verbose();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const dbPath = path.join(__dirname, "data", "app.db");
+const timerConfigPath = path.join(__dirname, "data", "timer_config.json");
 
 const db = new sqlite3.Database(dbPath);
 
@@ -552,6 +554,110 @@ function normalizeBoolean(value, fallback = false) {
     return false;
   }
   return fallback;
+}
+
+/**
+ * Validates and normalizes timer values in MM:SS or H:MM:SS-like text input format.
+ * @param {*} value Raw timer input.
+ * @returns {string} Normalized timer value or empty string.
+ */
+function normalizeTimerInputValue(value) {
+  const normalized = normalizeString(value);
+  return /^\d{1,2}:\d{2}$/.test(normalized) ? normalized : "";
+}
+
+/**
+ * Loads the persisted timer configuration JSON file.
+ * @returns {Promise<object>} Parsed timer configuration object.
+ */
+async function loadTimerConfigFile() {
+  const rawContent = await fs.promises.readFile(timerConfigPath, "utf8");
+  const parsedContent = JSON.parse(rawContent);
+  return parsedContent && typeof parsedContent === "object" ? parsedContent : {};
+}
+
+/**
+ * Writes one timer configuration object to disk.
+ * @param {object} config Timer configuration payload.
+ * @returns {Promise<void>} Resolves when the file has been written.
+ */
+async function saveTimerConfigFile(config) {
+  const jsonContent = `${JSON.stringify(config, null, 2)}\n`;
+  await fs.promises.writeFile(timerConfigPath, jsonContent, "utf8");
+}
+
+/**
+ * Normalizes a timer config update payload coming from the UI.
+ * @param {object} input Raw request payload.
+ * @returns {{start: string, alerts: Array<{id: number, alertTime: string}>}|null} Normalized update or null when invalid.
+ */
+function normalizeTimerConfigUpdate(input) {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const start = normalizeTimerInputValue(input.start);
+  if (!start) {
+    return null;
+  }
+
+  if (!Array.isArray(input.alerts)) {
+    return null;
+  }
+
+  const alerts = [];
+  for (const rawAlert of input.alerts) {
+    const alertId = Number(rawAlert?.id);
+    const alertTime = normalizeTimerInputValue(rawAlert?.alertTime);
+    if (!Number.isInteger(alertId) || alertId <= 0 || !alertTime) {
+      return null;
+    }
+
+    alerts.push({ id: alertId, alertTime });
+  }
+
+  return { start, alerts };
+}
+
+/**
+ * Merges a normalized timer update into an existing config object.
+ * @param {object} currentConfig Existing timer configuration.
+ * @param {{start: string, alerts: Array<{id: number, alertTime: string}>}} update Normalized timer update.
+ * @returns {object} Merged timer configuration.
+ */
+function mergeTimerConfig(currentConfig, update) {
+  const nextConfig = {
+    ...(currentConfig && typeof currentConfig === "object" ? currentConfig : {}),
+  };
+
+  nextConfig.start = update.start;
+
+  const existingAlerts = Array.isArray(nextConfig.alerts) ? nextConfig.alerts : [];
+  const mergedAlerts = existingAlerts.map((alert) => {
+    if (!alert || typeof alert !== "object") {
+      return alert;
+    }
+    return { ...alert };
+  });
+
+  const alertsById = new Map(
+    mergedAlerts
+      .filter((alert) => alert && typeof alert === "object")
+      .map((alert) => [Number(alert.id), alert])
+  );
+
+  update.alerts.forEach((alertUpdate) => {
+    const currentAlert = alertsById.get(alertUpdate.id);
+    if (currentAlert) {
+      currentAlert.alertTime = alertUpdate.alertTime;
+      return;
+    }
+
+    mergedAlerts.push({ id: alertUpdate.id, alertTime: alertUpdate.alertTime });
+  });
+
+  nextConfig.alerts = mergedAlerts;
+  return nextConfig;
 }
 
 /**
@@ -1786,7 +1892,52 @@ async function loadPlacementsWithEntries() {
 }
 
 app.use(express.json());
+
+/**
+ * Adds CORS headers for local cross-origin requests from the PHP timer host.
+ * @param {import('express').Request} req Express request object.
+ * @param {import('express').Response} res Express response object.
+ * @param {import('express').NextFunction} next Express next callback.
+ * @returns {void} Sends 204 for preflight or continues the middleware chain.
+ */
+app.use((req, res, next) => {
+  const requestOrigin = normalizeString(req.headers.origin);
+  const allowedOrigins = new Set([
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ]);
+
+  if (allowedOrigins.has(requestOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  }
+
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+
+  next();
+});
+
 app.use(express.static(path.join(__dirname, "public")));
+
+/**
+ * Returns process health status for container readiness checks.
+ * @returns {void} Sends health metadata.
+ */
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    service: "turnierplaner",
+    timestamp: new Date().toISOString(),
+  });
+});
 
 /**
  * Returns whether an app access password is already configured.
@@ -1937,6 +2088,28 @@ app.put("/api/setup", async (req, res) => {
     res.json({ settings: normalizedSettings });
   } catch (error) {
     res.status(500).json({ error: "Failed to save setup." });
+  }
+});
+
+/**
+ * Persists the timer config JSON used by the countdown UI.
+ * @returns {Promise<void>} Sends the updated timer configuration.
+ */
+app.put("/api/timer/config", async (req, res) => {
+  try {
+    const update = normalizeTimerConfigUpdate(req.body);
+    if (!update) {
+      res.status(400).json({ error: "Invalid timer config payload." });
+      return;
+    }
+
+    const currentConfig = await loadTimerConfigFile();
+    const nextConfig = mergeTimerConfig(currentConfig, update);
+    await saveTimerConfigFile(nextConfig);
+
+    res.json({ ok: true, config: nextConfig });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save timer config." });
   }
 });
 
@@ -2436,6 +2609,82 @@ app.get("/api/matches", async (req, res) => {
     res.json({ matches: rows });
   } catch (error) {
     res.status(500).json({ error: "Failed to load matches." });
+  }
+});
+
+/**
+ * Formats a persisted match start time into HH:MM when possible.
+ * @param {string|null|undefined} rawStartTime Raw persisted start time value.
+ * @returns {string} Formatted display time.
+ */
+function formatMatchStartTime(rawStartTime) {
+  const value = normalizeString(rawStartTime);
+  if (!value) {
+    return "--:--";
+  }
+
+  const hhmmMatch = value.match(/^(\d{1,2}:\d{2})/);
+  if (hhmmMatch) {
+    return hhmmMatch[1];
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${String(parsed.getHours()).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`;
+  }
+
+  return value;
+}
+
+/**
+ * Returns upcoming matches optimized for the timer read-only display.
+ * @param {number} [req.query.limit=4] Maximum amount of matches to return.
+ * @returns {Promise<void>} Sends timer match payload.
+ */
+app.get("/api/timer/upcoming-matches", async (req, res) => {
+  const parsedLimit = Number.parseInt(String(req.query?.limit ?? "4"), 10);
+  const limit = Number.isInteger(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 20) : 4;
+
+  try {
+    const rows = await all(
+      `
+        SELECT
+          m.id,
+          m.field_number,
+          m.start_time,
+          m.position,
+          t1.name AS team1_name,
+          t2.name AS team2_name,
+          tr.name AS referee_name
+        FROM matches m
+        LEFT JOIN teams t1 ON t1.id = m.team1_id
+        LEFT JOIN teams t2 ON t2.id = m.team2_id
+        LEFT JOIN teams tr ON tr.id = m.referee_id
+        WHERE m.is_finished = 0
+          AND COALESCE(m.entry_type, 'match') = 'match'
+        ORDER BY
+          CASE WHEN TRIM(COALESCE(m.start_time, '')) = '' THEN 1 ELSE 0 END ASC,
+          m.start_time ASC,
+          m.position ASC,
+          m.id ASC
+        LIMIT ?
+      `,
+      [limit]
+    );
+
+    const matches = rows.map((row, index) => ({
+      id: row.id,
+      field: row.field_number,
+      time: formatMatchStartTime(row.start_time),
+      team1: normalizeString(row.team1_name) || "TBD",
+      team2: normalizeString(row.team2_name) || "TBD",
+      referee: normalizeString(row.referee_name) || "-",
+      status: index < 2 ? "current" : "next",
+    }));
+
+    res.json({ matches });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load upcoming timer matches." });
   }
 });
 

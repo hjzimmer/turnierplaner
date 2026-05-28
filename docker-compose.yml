@@ -1,14 +1,43 @@
 services:
   turnierplaner:
-    container_name: turnierplaner
     build:
       context: .
       dockerfile: Dockerfile
-    environment:
-      NODE_ENV: production
-      PORT: 3000
+      network: host
+    container_name: turnierplaner
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+    devices:
+      - "/dev/snd:/dev/snd"
     restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:3000/api/health',(res)=>process.exit(res.statusCode===200?0:1)).on('error',()=>process.exit(1));",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  turnierplaner-timer-php:
+    image: php:8.2-apache
+    container_name: turnierplaner-timer-php
+    depends_on:
+      turnierplaner:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./public/Timer:/var/www/html:ro
+    restart: unless-stopped
+    environment:
+      TURNIERPLANER_API_BASE_URL: http://turnierplaner:3000

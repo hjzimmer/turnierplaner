@@ -1,0 +1,381 @@
+{
+  "start": "10:01",
+  "alerts_disabled": [
+    {
+      "id": 1,
+      "alertTime": "90:18",
+      "sounds": [
+        {
+          "file": "sounds/alarm-2.mp3",
+          "offset": 1,
+          "fade": 0
+        }
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "id": 2,
+      "alertTime": "1:00",
+      "sounds": [
+        {
+          "file": "sounds/Music/ACDC-All_Night_Long.mp3",
+          "offset": 17,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/ACDC_TNT.mp3",
+          "offset": 24,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Alan_Walker_-_The_Spectre.mp3",
+          "offset": 20,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Alvaro_Soler_-_La_Cintura.mp3",
+          "offset": 18,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/02-david_guetta_feat._rihanna_-_._rihanna_-_whos_that_chick_(original_mix)-ume.mp3",
+          "offset": 4,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Armin_van_Buuren_-_Blah_Blah_Blah.mp3",
+          "offset": 11,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/02_Allein_Allein.mp3",
+          "offset": 21,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Avicii_-_Levels.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/09_-_Westerland.mp3",
+          "offset": 15,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Axwell__Ingrosso_-_More_Than_You_Know.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/102_mando_diao_-_dance_with_somebody.mp3",
+          "offset": 6,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/103_sugababes_-_push_the_button.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Bob_Sinclar_-_Rock_This_Party.mp3",
+          "offset": 31,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/116_bob_sinclar_pres._goleo_vi_feat._gary_nesta_pine_-_love_generation.mp3",
+          "offset": 14,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/209_anastacia_-_sick_and_tired.mp3",
+          "offset": 5,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Calvin_Harris_-_Giant_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Coldplay_-_A_Sky_Full_Of_Stars.mp3",
+          "offset": 33,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Crazy_Town_-_Butterfly.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Cyndi_Lauper_-_Girls_Just_Want_To_Have_Fun_.mp3",
+          "offset": 15,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Daddy_Yankee__Katy_Perry_feat._Snow_-_Con_Calma_Remix_.mp3",
+          "offset": 10,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/213_peter_fox_-_haus_am_see.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/215_culcha_candela_-_hamma.mp3",
+          "offset": 10,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/216_fettes_brot_-_emanuela.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/Alligatoah_-_Du_bist_schön_(Official_Video).mp3",
+          "offset": 18,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Dynoro_Gigi_DAgostino_-_In_My_Mind_.mp3",
+          "offset": 47,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Dzeko__Torres_-_LAmour_Toujours_featDelaney_Jane_.mp3",
+          "offset": 62,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/BONEZ_MC_&_RAF_CAMORA_feat._MAXWELL_-_Ohne_mein_Team.mp3",
+          "offset": 20,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/Baha_Men_-_Who_Let_The_Dogs_Out.mp3",
+          "offset": 0,
+          "fade": 0
+        },
+        {
+          "file": "sounds/Music/EMF_-_Unbelievable_.mp3",
+          "offset": 6,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Eric_Prydz_–_Call_On_Me_.mp3",
+          "offset": 15,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Flo_Rida_-_Good_Feeling_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/mickie-krause-schatzi-schenk-mir-ein-foto.mp3",
+          "offset": 16,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/GALA_-_Freed_from_desire_.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Gigi_DAgostino_-_The_Riddle_.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/HUGEL_feat._Amber_van_Day_-_WTF_.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/moreMusic/David_Guetta_&_Sia-Titanium.mp3",
+          "offset": 0,
+          "fade": 0
+        },
+        {
+          "file": "sounds/Music/moreMusic/cascada-evacuate_the_dancefl.mp3",
+          "offset": 0,
+          "fade": 0
+        },
+        {
+          "file": "sounds/Music/moreMusic/Flo_Rida-Hangover_Feat._Taio_Cruz.mp3",
+          "offset": 0,
+          "fade": 0
+        },
+        {
+          "file": "sounds/Music/moreMusic/markus-becker-das-rote-pferd-feat-mallorca-cowboys.mp3",
+          "offset": 16,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Justin_Timberlake_-_CANT_STOP_THE_FEELING.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Kings_Of_Leon_-_Sex_on_Fire_.mp3",
+          "offset": 5,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Kungs_vs_Cookin_on_3_Burners_-_This_Girl_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Los_Del_Rio_-_Macarena_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Lost_Frequencies___Zonderling_-_Crazy_.mp3",
+          "offset": 4,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Loud_Luxury_feat_brando_-_Body_.mp3",
+          "offset": 9,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Luis_Fonsi__Demi_Lovato_-_Echame_La_Culpa_.mp3",
+          "offset": 15,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/MACKLEMORE___RYAN_LEWIS_-_CANT_HOLD_US_.mp3",
+          "offset": 80,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Mark_Forster_-_194_Laender_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Matt_Simons_-_We_Can_Do_Better_.mp3",
+          "offset": 44,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Metallica_-_Whiskey_In_The_Jar_.mp3",
+          "offset": 9,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Ofenbach_-_Be_Mine_.mp3",
+          "offset": 48,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Panic_At_The_Disco_-_High_Hopes_.mp3",
+          "offset": 11,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Pharrell_Williams_-_Happy_.mp3",
+          "offset": 4,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Pitbull,_Kesha_-_Timber_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Rednex_-_Cotton_Eye_Joe_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Reel_2_Real__-_I_Like_To_Move_It_2010_.mp3",
+          "offset": 34,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Regard_-_Ride_It_.mp3",
+          "offset": 26,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Rihanna_-_Dont_Stop_The_Music_.mp3",
+          "offset": 17,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Rihanna_-_SuM_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Scooter__-_Maria_.mp3",
+          "offset": 68,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Seeed_-_Augenbling_.mp3",
+          "offset": 11,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Sigma_-_Nobody_To_Love_.mp3",
+          "offset": 40,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Steve_Aoki___MARNIK_-_Bella_Ciao_.mp3",
+          "offset": 5,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/The_Black_Eyed_Peas_-_I_Gotta_Feeling.mp3",
+          "offset": 0,
+          "fade": 6
+        },
+        {
+          "file": "sounds/Music/The_Offspring_-_Pretty_Fly_.mp3",
+          "offset": 8,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/The_White_Stripes_-_Seven_Nation_Army_.mp3",
+          "offset": 11,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Was_wollen_wir_trinken_2K17_.mp3",
+          "offset": 0,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Topic-_Breaking_Me_.mp3",
+          "offset": 4,
+          "fade": 3
+        },
+        {
+          "file": "sounds/Music/Usher_-_DJ_Got_Us_Fallin_In_Love_.mp3",
+          "offset": 28,
+          "fade": 3
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "alertTime": "00:01",
+      "sounds": [
+        {
+          "file_old": "sounds/alarm-1.wav",
+          "file": "sounds/HupeEnde.mp3",
+          "offset": 0,
+          "fade": 0
+        }
+      ]
+    }
+  ]
+}
