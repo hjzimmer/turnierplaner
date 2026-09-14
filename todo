@@ -1,0 +1,10 @@
+Passwort eingabe als Menüeintrag evtl. etwas versteckt
+alle Menüs ausblenden, wenn kein passwort gesetzt
+
+
+
+ => => # npm warn EBADENGINE Unsupported engine {
+ => => # npm warn EBADENGINE   package: 'sqlite3@6.0.1',
+ => => # npm warn EBADENGINE   required: { node: '>=20.17.0' },
+ => => # npm warn EBADENGINE   current: { node: 'v18.20.8', npm: '10.8.2' }
+ => => # npm warn EBADENGINE }

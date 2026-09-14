@@ -81,6 +81,14 @@ Die App ist danach standardmaessig erreichbar unter:
 http://localhost:3000
 ```
 
+**Fuer die Entwicklung mit Timer (PHP-Server in separatem Terminal):**
+
+```bash
+TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t public/Timer
+```
+
+Timer ist dann erreichbar unter `http://localhost:8080`.
+
 ### Alternativer Port
 
 Du kannst einen eigenen Port setzen:
@@ -103,7 +111,7 @@ Container bauen und starten:
 docker compose up --build -d
 ```
 
-Compose-Services:
+Docker Compose-Services:
 - `turnierplaner`: Node API + Frontend auf Port `3000`.
 - `turnierplaner-timer-php`: PHP-Host fuer `public/Timer` auf Port `8080`.
 
@@ -161,20 +169,22 @@ npm start
 curl http://localhost:3000/api/health
 ```
 
-4. Timer-Endpunkt pruefen:
+4. Timer-Endpunkt testen:
 
 ```bash
 curl "http://localhost:3000/api/timer/upcoming-matches?limit=4"
 ```
 
-5. Timer PHP Server starten:
+5. Timer PHP Server starten (in separatem Terminal):
 
 ```bash
 cd /mnt/c/temp/vsv/Dokumente/familie/turnierplaner
 TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t public/Timer
 ```
 
-#### B) Containerbetrieb mit Docker Compose
+Timer verfuegbar unter: `http://localhost:8080/`
+
+#### B) Containerbetrieb mit Docker Compose (fuer Production/Deployment)
 
 1. Build und Start:
 
@@ -195,8 +205,10 @@ docker compose logs -f turnierplaner
 curl http://localhost:3000/api/health
 ```
 
-4. PHP-Timer pruefen:
-
+4. App verfuegbar unter:
+   - Node App: `http://localhost:3000`
+   - Timer: `http://localhost:8080`
+     - PHP-Timer pruefen:
 ```bash
 curl http://localhost:8080/get_upcoming_matches.php
 ```
