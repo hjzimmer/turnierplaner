@@ -1891,8 +1891,6 @@ async function loadPlacementsWithEntries() {
   return placements;
 }
 
-app.use(express.json());
-
 /**
  * Adds CORS headers for local cross-origin requests from the PHP timer host.
  * @param {import('express').Request} req Express request object.
@@ -1909,14 +1907,21 @@ app.use((req, res, next) => {
     "http://127.0.0.1:3000",
   ]);
 
+  // Set CORS headers for allowed origins, or fallback to wildcard for local dev
   if (allowedOrigins.has(requestOrigin)) {
     res.setHeader("Access-Control-Allow-Origin", requestOrigin);
-    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  } else {
+    // Allow all origins for local development (Docker + local testing)
+    res.setHeader("Access-Control-Allow-Origin", "*");
   }
 
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Max-Age", "3600");
 
+  // Handle preflight requests
   if (req.method === "OPTIONS") {
     res.sendStatus(204);
     return;
@@ -1924,6 +1929,8 @@ app.use((req, res, next) => {
 
   next();
 });
+
+app.use(express.json());
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -1990,7 +1997,49 @@ app.put("/api/access-password", async (req, res) => {
  */
 app.post("/api/access-password/verify", async (req, res) => {
   try {
-    const rawPassword = normalizePasswordInput(req.body?.password);
+    const hashedPassword = await loadAccessPassword();
+    const inputPassword = normalizeString(req.body?.password);
+    if (!hashedPassword) {
+      res.status(500).json({ error: "Access password not configured." });
+      return;
+    }
+
+    const isMatch = await bcrypt.compare(inputPassword, hashedPassword);
+    if (!isMatch) {
+      res.status(401).json({ error: "Incorrect password." });
+      return;
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: "Password verification failed." });
+  }
+});
+
+/**
+ * Persists the timer config JSON used by the countdown UI.
+ * @returns {Promise<void>} Sends the updated timer configuration.
+ */
+app.put("/api/timer/config", async (req, res) => {
+  try {
+    const update = normalizeTimerConfigUpdate(req.body);
+    if (!update) {
+      res.status(400).json({ error: "Invalid timer config payload." });
+      return;
+    }
+
+    const currentConfig = await loadTimerConfigFile();
+    const nextConfig = mergeTimerConfig(currentConfig, update);
+    await saveTimerConfigFile(nextConfig);
+
+    res.json({ ok: true, config: nextConfig });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save timer config." });
+  }
+});
+
+/**
+ *  const rawPassword = normalizePasswordInput(req.body?.password);
     const currentHash = await loadStoredAppPasswordHash();
     if (!hasStoredPasswordHash(currentHash)) {
       res.status(409).json({ error: "Password is not set yet.", is_set: false });
@@ -2091,27 +2140,7 @@ app.put("/api/setup", async (req, res) => {
   }
 });
 
-/**
- * Persists the timer config JSON used by the countdown UI.
- * @returns {Promise<void>} Sends the updated timer configuration.
- */
-app.put("/api/timer/config", async (req, res) => {
-  try {
-    const update = normalizeTimerConfigUpdate(req.body);
-    if (!update) {
-      res.status(400).json({ error: "Invalid timer config payload." });
-      return;
-    }
 
-    const currentConfig = await loadTimerConfigFile();
-    const nextConfig = mergeTimerConfig(currentConfig, update);
-    await saveTimerConfigFile(nextConfig);
-
-    res.json({ ok: true, config: nextConfig });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to save timer config." });
-  }
-});
 
 /**
  * Normalizes scoring mode key to one of the supported options.

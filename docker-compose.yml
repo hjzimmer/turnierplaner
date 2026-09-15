@@ -40,4 +40,4 @@ services:
       - ./public/Timer:/var/www/html:ro
     restart: unless-stopped
     environment:
-      TURNIERPLANER_API_BASE_URL: http://turnierplaner:3000
+      TURNIERPLANER_API_BASE_URL: http://localhost:3000
