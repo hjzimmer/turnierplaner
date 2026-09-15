@@ -2039,6 +2039,18 @@ app.put("/api/timer/config", async (req, res) => {
 });
 
 /**
+ * Returns the timer configuration used by the countdown UI.
+ * @returns {Promise<void>} Sends the persisted timer configuration.
+ */
+app.get("/api/timer/config", async (req, res) => {
+  try {
+    res.json(await loadTimerConfigFile());
+  } catch (error) {
+    res.status(500).json({ error: "Failed to load timer config." });
+  }
+});
+
+/**
  *  const rawPassword = normalizePasswordInput(req.body?.password);
     const currentHash = await loadStoredAppPasswordHash();
     if (!hasStoredPasswordHash(currentHash)) {

@@ -6,7 +6,6 @@
  */
 
 // Konfigurationsdatei einlesen
-$configFile = '../../data/timer_config.json';
 $soundConfig = [];
 $defaultStart = 600;
 $log = '';
@@ -15,8 +14,15 @@ if (!is_string($timerApiBaseUrl) || trim($timerApiBaseUrl) === '') {
     $timerApiBaseUrl = 'http://localhost:3000';
 }
 
-if (file_exists($configFile)) {
-    $jsonContent = file_get_contents($configFile);
+$timerInternalApiBaseUrl = getenv('TURNIERPLANER_INTERNAL_API_BASE_URL');
+if (!is_string($timerInternalApiBaseUrl) || trim($timerInternalApiBaseUrl) === '') {
+    $timerInternalApiBaseUrl = 'http://localhost:3000';
+}
+
+$configApiUrl = rtrim($timerInternalApiBaseUrl, '/') . '/api/timer/config';
+$jsonContent = @file_get_contents($configApiUrl);
+
+if ($jsonContent !== false) {
     $config = json_decode($jsonContent, true);
     
     if ($config && json_last_error() === JSON_ERROR_NONE) {
@@ -39,8 +45,7 @@ if (file_exists($configFile)) {
         }
     }
 } else {
-    //echo sprintf('<p>Konfigurationsdatei nicht gefunden: %s</p>', $configFile); 
-    // echo sprintf('<p>Aktuelles Verzeichnis: %s</p>', getcwd());
+    error_log(sprintf('Timer config API not reachable: %s', $configApiUrl));
 }
 
 // Hinweis: Der garantierte Alarm wird dynamisch in JavaScript hinzugefügt (bei startSeconds - 1)

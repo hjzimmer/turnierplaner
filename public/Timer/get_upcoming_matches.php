@@ -6,7 +6,7 @@
 
 header('Content-Type: application/json');
 
-$baseUrl = getenv('TURNIERPLANER_API_BASE_URL');
+$baseUrl = getenv('TURNIERPLANER_INTERNAL_API_BASE_URL');
 if (!is_string($baseUrl) || trim($baseUrl) === '') {
     $baseUrl = 'http://localhost:3000';
 }
