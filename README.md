@@ -84,7 +84,7 @@ http://localhost:3000
 **Fuer die Entwicklung mit Timer (PHP-Server in separatem Terminal):**
 
 ```bash
-TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t public/Timer
+TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t public/Timer
 ```
 
 Timer ist dann erreichbar unter `http://localhost:8080`.

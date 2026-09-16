@@ -169,6 +169,15 @@ body {
   transform: translateY(-50%) rotate(-90deg);
 }
 
+/* Standalone level-1 buttons (e.g. Login) have no submenu, so no dropdown arrow. */
+.menu-btn.level-1.menu-btn-standalone {
+  padding-right: 0.75rem;
+}
+
+.menu-btn.level-1.menu-btn-standalone::after {
+  content: none;
+}
+
 .menu-btn:hover {
   background: #eef4fb;
 }

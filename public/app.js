@@ -87,9 +87,16 @@ const topbarLogoImage = document.getElementById("topbarLogoImage");
 const topbarTitle = document.querySelector(".title-block h1");
 const topbarSubtitle = document.querySelector(".title-block p");
 const menuGroups = [...document.querySelectorAll(".menu-group")];
-const levelOneButtons = [...document.querySelectorAll(".menu-btn.level-1")];
+const levelOneButtons = [...document.querySelectorAll(".menu-btn.level-1")].filter(
+  (button) => button.dataset.action !== "login"
+);
 const menuButtons = [...document.querySelectorAll(".menu-btn.level-2")];
 const sections = [...document.querySelectorAll(".content-section")];
+const loginMenuGroup = document.getElementById("loginMenuGroup");
+const loginMenuButton = document.getElementById("loginMenuButton");
+const protectedMenuGroups = menuGroups.filter(
+  (group) => group.id !== "resultsMenuGroup" && group.id !== "loginMenuGroup"
+);
 const LAST_ACTIVE_VIEW_STORAGE_KEY = "turnierplaner-active-view";
 const settingsMount = document.getElementById("tournamentSettingsMount");
 const teamsMount = document.getElementById("teamsMount");
@@ -135,7 +142,8 @@ let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
 let activeMatchResultDialog = null;
 let persistedScoringModeKey = "vereinfachter_turniermodus";
-let hasUnlockedProtectedViews = false;
+// Initialized from session storage so a reload keeps the sidebar unlock state in sync.
+let hasUnlockedProtectedViews = loadProtectedAccessFlag();
 
 const UNPROTECTED_VIEW_NAMES = new Set(["turnierergebnisse", "turnieruebersicht"]);
 const PROTECTED_ACCESS_STORAGE_KEY = "turnierplaner-protected-access";
@@ -459,6 +467,19 @@ function persistProtectedAccessFlag(value) {
 }
 
 /**
+ * Shows protected menu groups and hides the Login entry once unlocked, or the reverse when locked.
+ * @returns {void}
+ */
+function updateProtectedMenuVisibility() {
+  protectedMenuGroups.forEach((group) => {
+    group.hidden = !hasUnlockedProtectedViews;
+  });
+  if (loginMenuGroup) {
+    loginMenuGroup.hidden = hasUnlockedProtectedViews;
+  }
+}
+
+/**
  * Applies one resolved view to menu and section visibility state.
  * @param {string} targetViewName Resolved target view identifier.
  * @returns {void}
@@ -691,6 +712,7 @@ async function ensureProtectedAccessGranted() {
   const unlockedFromSession = loadProtectedAccessFlag();
   if (unlockedFromSession) {
     hasUnlockedProtectedViews = true;
+    updateProtectedMenuVisibility();
     return true;
   }
 
@@ -716,6 +738,7 @@ async function ensureProtectedAccessGranted() {
 
   hasUnlockedProtectedViews = true;
   persistProtectedAccessFlag(true);
+  updateProtectedMenuVisibility();
   return true;
 }
 
@@ -4211,6 +4234,7 @@ settingsUi.changePasswordButton.addEventListener("click", async () => {
 settingsUi.logoutProtectedViewsButton.addEventListener("click", async () => {
   hasUnlockedProtectedViews = false;
   persistProtectedAccessFlag(false);
+  updateProtectedMenuVisibility();
   setSaveStatus(settingsUi.changePasswordStatus, "Abgemeldet. Geschuetzte Menues sind wieder gesperrt.");
   await openView("turnierergebnisse");
 });
@@ -4547,11 +4571,16 @@ levelOneButtons.forEach((button) => {
   });
 });
 
+loginMenuButton?.addEventListener("click", async () => {
+  await ensureProtectedAccessGranted();
+});
+
 mobileQuery.addEventListener("change", () => {
   appLayout.classList.remove("is-open-mobile");
   syncBackdrop();
 });
 
+updateProtectedMenuVisibility();
 void openView(loadPersistedActiveViewName() || getDefaultViewName());
 initializeTournamentSettings();
 initializeScoringMode();

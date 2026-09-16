@@ -1997,22 +1997,22 @@ app.put("/api/access-password", async (req, res) => {
  */
 app.post("/api/access-password/verify", async (req, res) => {
   try {
-    const hashedPassword = await loadAccessPassword();
-    const inputPassword = normalizeString(req.body?.password);
-    if (!hashedPassword) {
-      res.status(500).json({ error: "Access password not configured." });
+    const rawPassword = normalizePasswordInput(req.body?.password);
+    const currentHash = await loadStoredAppPasswordHash();
+    if (!hasStoredPasswordHash(currentHash)) {
+      res.status(409).json({ error: "Password is not set yet.", is_set: false });
       return;
     }
 
-    const isMatch = await bcrypt.compare(inputPassword, hashedPassword);
-    if (!isMatch) {
-      res.status(401).json({ error: "Incorrect password." });
+    const isValid = rawPassword.length > 0 && verifyPasswordHash(rawPassword, currentHash);
+    if (!isValid) {
+      res.status(401).json({ ok: false, error: "Invalid password." });
       return;
     }
 
     res.json({ ok: true });
-  } catch (error) {
-    res.status(500).json({ error: "Password verification failed." });
+  } catch {
+    res.status(500).json({ error: "Failed to verify password." });
   }
 });
 
@@ -2047,26 +2047,6 @@ app.get("/api/timer/config", async (req, res) => {
     res.json(await loadTimerConfigFile());
   } catch (error) {
     res.status(500).json({ error: "Failed to load timer config." });
-  }
-});
-
-/**
- *  const rawPassword = normalizePasswordInput(req.body?.password);
-    const currentHash = await loadStoredAppPasswordHash();
-    if (!hasStoredPasswordHash(currentHash)) {
-      res.status(409).json({ error: "Password is not set yet.", is_set: false });
-      return;
-    }
-
-    const isValid = rawPassword.length > 0 && verifyPasswordHash(rawPassword, currentHash);
-    if (!isValid) {
-      res.status(401).json({ ok: false, error: "Invalid password." });
-      return;
-    }
-
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to verify password." });
   }
 });
 

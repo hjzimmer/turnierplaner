@@ -1,5 +1,5 @@
 {
-  "start": "10:01",
+  "start": "1:05",
   "alerts_disabled": [
     {
       "id": 1,
@@ -16,7 +16,7 @@
   "alerts": [
     {
       "id": 2,
-      "alertTime": "1:00",
+      "alertTime": "01:00",
       "sounds": [
         {
           "file": "sounds/Music/ACDC-All_Night_Long.mp3",
