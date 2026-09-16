@@ -18,6 +18,9 @@ Alle Daten werden in einer SQLite-Datenbank gespeichert.
 - Pro Team getrennte Verfuegbarkeit als spielendes Team und als Schiedsrichter.
 
 ### 3. Turnierkonfiguration
+```bash
+TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t Timer
+```
 - Erstellen von Turnierphasen.
 - Konfiguration von Gruppen- und Match-basierten Bloecken.
 - Wahl und Persistenz des Wertungsmodus.
@@ -47,9 +50,9 @@ Ein sinnvoller Standardablauf ist:
 5. Spiele in der Spielplanung einteilen.
 6. In der Ergebniseingabe waehrend des Turniers Ergebnisse erfassen.
 7. In Turnierergebnisse die Gesamtuebersicht und Endstaende kontrollieren.
-
-## Running
-
+- Read-only Datenfluss fuer PHP:
+- `Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
+- Stattdessen konsumiert PHP die Node-API: `/api/timer/upcoming-matches`.
 ### Voraussetzungen
 - Node.js 18+ empfohlen.
 - npm.
@@ -84,7 +87,7 @@ http://localhost:3000
 **Fuer die Entwicklung mit Timer (PHP-Server in separatem Terminal):**
 
 ```bash
-TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t public/Timer
+TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t Timer
 ```
 
 Timer ist dann erreichbar unter `http://localhost:8080`.
@@ -113,10 +116,10 @@ docker compose up --build -d
 
 Docker Compose-Services:
 - `turnierplaner`: Node API + Frontend auf Port `3000`.
-- `turnierplaner-timer-php`: PHP-Host fuer `public/Timer` auf Port `8080`.
+- `turnierplaner-timer-php`: PHP-Host fuer `Timer` auf Port `8080`.
 
 Read-only Datenfluss fuer PHP:
-- `public/Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
+- `Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
 - Stattdessen konsumiert PHP die Node-API: `/api/timer/upcoming-matches`.
 - API-Basis-URL wird ueber `TURNIERPLANER_API_BASE_URL` gesteuert.
 
@@ -179,7 +182,7 @@ curl "http://localhost:3000/api/timer/upcoming-matches?limit=4"
 
 ```bash
 cd /mnt/c/temp/vsv/Dokumente/familie/turnierplaner
-TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t public/Timer
+TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t Timer
 ```
 
 Timer verfuegbar unter: `http://localhost:8080/`

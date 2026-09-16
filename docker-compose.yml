@@ -9,8 +9,8 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
-    devices:
-      - "/dev/snd:/dev/snd"
+    #devices:
+    #  - "/dev/snd:/dev/snd"
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -37,7 +37,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - ./public/Timer:/var/www/html:ro
+      - ./Timer:/var/www/html:ro
     restart: unless-stopped
     environment:
       TURNIERPLANER_API_BASE_URL: http://localhost:3000

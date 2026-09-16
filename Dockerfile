@@ -9,7 +9,7 @@ COPY node_modules ./node_modules
 
 COPY server.js ./
 COPY public ./public
-COPY data ./data
+#COPY data ./data
 COPY LICENSE NOTICE README.md ./
 
 EXPOSE 3000
