@@ -142,11 +142,13 @@ let startedPhaseStateSaveInFlight = false;
 let startedPhaseStateSaveQueued = false;
 let activeMatchResultDialog = null;
 let persistedScoringModeKey = "vereinfachter_turniermodus";
-// Initialized from session storage so a reload keeps the sidebar unlock state in sync.
-let hasUnlockedProtectedViews = loadProtectedAccessFlag();
 
 const UNPROTECTED_VIEW_NAMES = new Set(["turnierergebnisse", "turnieruebersicht"]);
 const PROTECTED_ACCESS_STORAGE_KEY = "turnierplaner-protected-access";
+const PROTECTED_ACCESS_COOKIE_MAX_AGE_SECONDS = 3 * 24 * 60 * 60;
+
+// Initialized from a cookie so a reload or browser restart keeps the login unlocked for its validity period.
+let hasUnlockedProtectedViews = loadProtectedAccessFlag();
 
 /**
  * Iterates over all mounted tournament planning views.
@@ -438,31 +440,54 @@ function isProtectedViewName(viewName) {
 }
 
 /**
- * Loads a persisted protected-access unlock flag from session storage.
+ * Reads one cookie value by name from document.cookie.
+ * @param {string} name Cookie name.
+ * @returns {string|null} Cookie value or null when not present.
+ */
+function getCookieValue(name) {
+  const cookiePrefix = `${encodeURIComponent(name)}=`;
+  const cookieEntries = document.cookie ? document.cookie.split("; ") : [];
+  const match = cookieEntries.find((entry) => entry.startsWith(cookiePrefix));
+  return match ? decodeURIComponent(match.slice(cookiePrefix.length)) : null;
+}
+
+/**
+ * Writes or clears one cookie with an optional max-age in seconds.
+ * @param {string} name Cookie name.
+ * @param {string} value Cookie value.
+ * @param {number} maxAgeSeconds Cookie lifetime in seconds; use 0 to delete.
+ * @returns {void}
+ */
+function setCookieValue(name, value, maxAgeSeconds) {
+  document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}; max-age=${maxAgeSeconds}; path=/; SameSite=Lax`;
+}
+
+/**
+ * Loads a persisted protected-access unlock flag from a 3-day cookie.
  * @returns {boolean} True when protected access is already unlocked.
  */
 function loadProtectedAccessFlag() {
   try {
-    return window.sessionStorage.getItem(PROTECTED_ACCESS_STORAGE_KEY) === "1";
+    return getCookieValue(PROTECTED_ACCESS_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
 }
 
 /**
- * Persists the protected-access unlock flag in session storage.
+ * Persists the protected-access unlock flag in a cookie valid for 3 days, or clears it.
  * @param {boolean} value Unlock state to persist.
  * @returns {void}
  */
 function persistProtectedAccessFlag(value) {
   try {
     if (value) {
-      window.sessionStorage.setItem(PROTECTED_ACCESS_STORAGE_KEY, "1");
+      setCookieValue(PROTECTED_ACCESS_STORAGE_KEY, "1", PROTECTED_ACCESS_COOKIE_MAX_AGE_SECONDS);
       return;
     }
-    window.sessionStorage.removeItem(PROTECTED_ACCESS_STORAGE_KEY);
+    setCookieValue(PROTECTED_ACCESS_STORAGE_KEY, "", 0);
   } catch {
-    // Ignore storage errors.
+    // Ignore cookie write errors.
   }
 }
 
