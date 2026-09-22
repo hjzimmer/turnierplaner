@@ -7,9 +7,118 @@ const sqlite3 = require("sqlite3").verbose();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const dbPath = path.join(__dirname, "data", "app.db");
+const backupDbPath = path.join(__dirname, "data", "app.backup.db");
+const temporaryBackupDbPath = path.join(__dirname, "data", "app.backup.tmp.db");
+const restoreDbPath = path.join(__dirname, "data", "app.restore.db");
+const replacedDbPath = path.join(__dirname, "data", "app.replace.tmp.db");
 const timerConfigPath = path.join(__dirname, "data", "timer_config.json");
+const restoreCheckIntervalMs = 15_000;
 
-const db = new sqlite3.Database(dbPath);
+let db = new sqlite3.Database(dbPath);
+let databaseBackupQueue = Promise.resolve();
+let databaseRestoreInProgress = false;
+let activeApiRequestCount = 0;
+let resolveActiveApiRequests = null;
+
+/**
+ * Opens a new SQLite database connection for the current database file.
+ * @returns {void} Updates the active database connection.
+ */
+function openDatabase() {
+  db = new sqlite3.Database(dbPath);
+}
+
+/**
+ * Closes the active SQLite database connection.
+ * @returns {Promise<void>} Resolves after the connection has closed.
+ */
+function closeDatabase() {
+  return new Promise((resolve, reject) => {
+    db.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+/**
+ * Waits until all API requests accepted before a database restore have completed.
+ * @returns {Promise<void>} Resolves when no API request remains active.
+ */
+function waitForActiveApiRequests() {
+  if (activeApiRequestCount === 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    resolveActiveApiRequests = resolve;
+  });
+}
+
+/**
+ * Applies a fully prepared restore database file to the running backend.
+ * @returns {Promise<boolean>} True when a restore file was found and applied.
+ */
+async function applyPendingDatabaseRestore() {
+  if (databaseRestoreInProgress) {
+    return false;
+  }
+
+  try {
+    await fs.promises.access(restoreDbPath, fs.constants.F_OK);
+  } catch {
+    return false;
+  }
+
+  databaseRestoreInProgress = true;
+  try {
+    await waitForActiveApiRequests();
+    await databaseBackupQueue;
+    await closeDatabase();
+
+    await fs.promises.rm(replacedDbPath, { force: true });
+    await fs.promises.rename(dbPath, replacedDbPath);
+
+    try {
+      await fs.promises.rename(restoreDbPath, dbPath);
+    } catch (error) {
+      await fs.promises.rename(replacedDbPath, dbPath);
+      throw error;
+    }
+
+    await fs.promises.rm(replacedDbPath, { force: true });
+    openDatabase();
+    return true;
+  } finally {
+    databaseRestoreInProgress = false;
+  }
+}
+
+/**
+ * Checks for a prepared restore database and logs unexpected restore failures.
+ * @returns {Promise<void>} Resolves after the restore check finishes.
+ */
+async function checkForPendingDatabaseRestore() {
+  try {
+    const restored = await applyPendingDatabaseRestore();
+    if (restored) {
+      // eslint-disable-next-line no-console
+      console.log("Database restore applied from data/app.restore.db.");
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("Database restore failed:", error);
+    try {
+      await fs.promises.access(dbPath, fs.constants.F_OK);
+      openDatabase();
+    } catch (_) {
+      // Keep the failure visible in the log; no database file is available to reopen.
+    }
+  }
+}
 
 /**
  * Executes a SQL write statement and resolves with sqlite run metadata.
@@ -27,6 +136,54 @@ function run(sql, params = []) {
       resolve(this);
     });
   });
+}
+
+/**
+ * Creates a consistent SQLite backup in a temporary file.
+ * @returns {Promise<void>} Resolves after the SQLite backup API has finished.
+ */
+function createTemporaryDatabaseBackup() {
+  return new Promise((resolve, reject) => {
+    const backup = db.backup(temporaryBackupDbPath);
+    backup.step(-1, (stepError) => {
+      if (stepError) {
+        backup.finish(() => reject(stepError));
+        return;
+      }
+
+      backup.finish((finishError) => {
+        if (finishError) {
+          reject(finishError);
+          return;
+        }
+        resolve();
+      });
+    });
+  });
+}
+
+/**
+ * Creates and atomically publishes a current database backup.
+ * @returns {Promise<void>} Resolves after the backup file has been replaced.
+ */
+function createDatabaseBackup() {
+  const backupTask = databaseBackupQueue.then(async () => {
+    await fs.promises.rm(temporaryBackupDbPath, { force: true });
+    await createTemporaryDatabaseBackup();
+    await fs.promises.rename(temporaryBackupDbPath, backupDbPath);
+  });
+
+  databaseBackupQueue = backupTask.catch(() => undefined);
+  return backupTask;
+}
+
+/**
+ * Commits the active transaction and creates a current database backup.
+ * @returns {Promise<void>} Resolves after the transaction and backup succeed.
+ */
+async function commitAndBackup() {
+  await run("COMMIT");
+  await createDatabaseBackup();
 }
 
 /**
@@ -1932,6 +2089,35 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
+/**
+ * Blocks new API requests during a database restore and tracks accepted requests.
+ * @param {import('express').Request} req Express request object.
+ * @param {import('express').Response} res Express response object.
+ * @param {import('express').NextFunction} next Express next callback.
+ * @returns {void} Continues the request or sends a restore-in-progress response.
+ */
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) {
+    next();
+    return;
+  }
+
+  if (databaseRestoreInProgress) {
+    res.status(503).json({ error: "Database restore in progress. Please retry shortly." });
+    return;
+  }
+
+  activeApiRequestCount += 1;
+  res.once("finish", () => {
+    activeApiRequestCount = Math.max(0, activeApiRequestCount - 1);
+    if (activeApiRequestCount === 0 && resolveActiveApiRequests) {
+      resolveActiveApiRequests();
+      resolveActiveApiRequests = null;
+    }
+  });
+  next();
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 /**
@@ -1983,6 +2169,7 @@ app.put("/api/access-password", async (req, res) => {
       "UPDATE setup SET app_password_hash = ?, updated_at = datetime('now') WHERE id = 1",
       [nextHash]
     );
+    await createDatabaseBackup();
 
     res.json({ ok: true });
   } catch {
@@ -2084,6 +2271,7 @@ app.post("/api/access-password/change", async (req, res) => {
       "UPDATE setup SET app_password_hash = ?, updated_at = datetime('now') WHERE id = 1",
       [nextHash]
     );
+    await createDatabaseBackup();
 
     res.json({ ok: true });
   } catch {
@@ -2125,6 +2313,7 @@ app.put("/api/setup", async (req, res) => {
       WHERE id = 1`,
       setupSettingsToSqlParams(normalizedSettings)
     );
+    await createDatabaseBackup();
 
     res.json({ settings: normalizedSettings });
   } catch (error) {
@@ -2174,6 +2363,7 @@ app.put("/api/scoring-mode", async (req, res) => {
       "UPDATE scoring_mode_state SET mode_key = ?, updated_at = datetime('now') WHERE id = 1",
       [modeKey]
     );
+    await createDatabaseBackup();
     res.json({ mode_key: modeKey });
   } catch (error) {
     res.status(500).json({ error: "Failed to save scoring mode." });
@@ -2215,7 +2405,7 @@ app.put("/api/teams", async (req, res) => {
       );
     }
 
-    await run("COMMIT");
+    await commitAndBackup();
     res.json({ teams });
   } catch (error) {
     try {
@@ -2285,7 +2475,7 @@ app.put("/api/phases", async (req, res) => {
       await run("DELETE FROM phases");
     }
 
-    await run("COMMIT");
+    await commitAndBackup();
 
     const rows = await all("SELECT id, name, mode_type FROM phases ORDER BY position ASC, id ASC");
     const result = rows.map((r) => ({ id: r.id, name: r.name, mode_type: r.mode_type || "" }));
@@ -2453,7 +2643,7 @@ app.put("/api/phases/:id/blocks", async (req, res) => {
       await run("DELETE FROM phase_blocks WHERE phase_id = ?", [phaseId]);
     }
 
-    await run("COMMIT");
+    await commitAndBackup();
 
     const blocks = await loadPhaseBlocksWithSlots(phaseId);
     res.json({ blocks });
@@ -2565,7 +2755,7 @@ app.put("/api/placements", async (req, res) => {
       }
     }
 
-    await run("COMMIT");
+    await commitAndBackup();
 
     const placements = await loadPlacementsWithEntries();
     res.json({ placements });
@@ -2861,7 +3051,7 @@ app.put("/api/matches/:matchId/sets", async (req, res) => {
 
     await recomputeDerivedMatchState(scoringModeKey, configuredSetCount);
 
-    await run("COMMIT");
+    await commitAndBackup();
     res.json({
       sets: persistedSets,
       outcome,
@@ -2902,7 +3092,7 @@ app.delete("/api/matches/:matchId/sets", async (req, res) => {
     await run("DELETE FROM match_sets WHERE match_id = ?", [matchId]);
     await run("UPDATE matches SET is_finished = 0, winner_id = NULL, loser_id = NULL WHERE id = ?", [matchId]);
     await recomputeDerivedMatchState(scoringModeKey, configuredSetCount);
-    await run("COMMIT");
+    await commitAndBackup();
     res.json({ ok: true });
   } catch (error) {
     try {
@@ -2979,7 +3169,7 @@ app.put("/api/matches/phases/started", async (req, res) => {
       [activePhaseId]
     );
 
-    await run("COMMIT");
+    await commitAndBackup();
 
     res.json({
       startedPhaseIds,
@@ -3130,7 +3320,7 @@ app.put("/api/matches/phase/:phaseId", async (req, res) => {
       await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
     }
 
-    await run("COMMIT");
+    await commitAndBackup();
     const rows = await all(
       "SELECT * FROM matches WHERE phase_id = ? ORDER BY position ASC, id ASC",
       [phaseId]
@@ -3163,6 +3353,7 @@ app.delete("/api/matches/phase/:phaseId", async (req, res) => {
       phaseId,
     ]);
     await run("DELETE FROM matches WHERE phase_id = ?", [phaseId]);
+    await createDatabaseBackup();
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to delete matches." });
@@ -3171,11 +3362,15 @@ app.delete("/api/matches/phase/:phaseId", async (req, res) => {
 
 // Initialisiert die Datenbank und startet danach den HTTP-Server.
 initializeDatabase()
-  .then(() => {
+  .then(async () => {
+    await createDatabaseBackup();
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`Turnierplaner running on http://localhost:${PORT}`);
     });
+    setInterval(() => {
+      void checkForPendingDatabaseRestore();
+    }, restoreCheckIntervalMs);
   })
   .catch((error) => {
     // eslint-disable-next-line no-console

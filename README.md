@@ -78,6 +78,12 @@ npm rebuild sqlite3
 npm start
 ```
 
+### Datenbank backup und wiederherstellen
+
+Das Backend erzeugt nach jeder Schreiboperation eine `data/app.backup.db`, welche als Backupdatei genutzt werden kann.
+
+Zudem prueft das Backend alle 15 Sekunden auf `data/app.restore.db`. Zum Wiederherstellen eine vollstaendige SQLite-Datei zuerst unter einem anderen Namen in das `data`-Verzeichnis kopieren und erst danach nach `app.restore.db` umbenennen. Das Backend ersetzt damit `app.db`, oeffnet die Datenbank neu und entfernt die Restore-Datei. Beim Restore wird kein neues `app.backup.db` erstellt.
+
 Die App ist danach standardmaessig erreichbar unter:
 
 ```text
