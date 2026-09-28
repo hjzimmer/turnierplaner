@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       network: host
+    image: hajozi70/turnierplaner:${VERSION:-latest}
     container_name: turnierplaner
     ports:
       - "3000:3000"

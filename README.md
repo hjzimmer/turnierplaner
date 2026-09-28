@@ -124,6 +124,38 @@ Docker Compose-Services:
 - `turnierplaner`: Node API + Frontend auf Port `3000`.
 - `turnierplaner-timer-php`: PHP-Host fuer `Timer` auf Port `8080`.
 
+#### Image taggen und veroeffentlichen
+
+In `docker-compose.yml` muss beim Service `turnierplaner` der Image-Name auf den eigenen Docker-Hub-Benutzernamen zeigen:
+
+```yaml
+image: DEINUSERNAME/turnierplaner:${VERSION:-latest}
+```
+
+`DEINUSERNAME` in der Compose-Datei und in den folgenden Befehlen durch den eigenen Docker-Hub-Benutzernamen ersetzen. `VERSION` steuert den Versions-Tag. Unter PowerShell:
+
+```powershell
+$env:VERSION = "1.0.0"
+```
+
+Unter Bash/WSL:
+
+```bash
+export VERSION=1.0.0
+```
+
+Anschliessend anmelden, das Image mit dem Versions-Tag bauen, zusaetzlich als `latest` taggen und beide Tags pushen:
+
+```bash
+docker login
+docker compose build turnierplaner
+docker tag DEINUSERNAME/turnierplaner:1.0.0 DEINUSERNAME/turnierplaner:latest
+docker push DEINUSERNAME/turnierplaner:1.0.0
+docker push DEINUSERNAME/turnierplaner:latest
+```
+
+Fuer eine neue Version `VERSION` und die Versions-Tags in den Befehlen entsprechend anpassen. Ohne gesetzte `VERSION` verwendet Compose den Fallback-Tag `latest`.
+
 Read-only Datenfluss fuer PHP:
 - `Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
 - Stattdessen konsumiert PHP die Node-API: `/api/timer/upcoming-matches`.
