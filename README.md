@@ -158,7 +158,7 @@ docker login
 export VERSION=1.0.0
 ```
 
-Beide fertigen Images mit diesem Tag bauen und pushen:
+Beide fertigen Images mit diesem Tag bauen (settings für .env einstellen) und pushen:
 
 ```bash
 npm install
