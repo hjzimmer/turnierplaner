@@ -1,0 +1,14 @@
+FROM php:8.2-apache
+
+COPY certificates/ZscalerRootCA.crt /usr/local/share/ca-certificates/ZscalerRootCA.crt
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && update-ca-certificates --fresh \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Timer/ /var/www/html/
+
+RUN mkdir -p /var/www/html/sounds
+
+EXPOSE 80

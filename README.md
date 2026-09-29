@@ -1,283 +1,250 @@
 # Turnierplaner
 
-Turnierplaner ist eine lokale Webanwendung zur Planung und Durchfuehrung von Turnieren.
-Die Anwendung bietet einen kompletten Ablauf von der Turnierkonfiguration bis zur Ergebnisauswertung.
-Alle Daten werden in einer SQLite-Datenbank gespeichert.
+Turnierplaner ist eine Webanwendung zur Planung und Durchfuehrung von Turnieren.
+Die Anwendung verwaltet Turniersetup, Teams, Phasen, Spielplanung, Ergebnisse und
+Platzierungen. Alle Anwendungsdaten werden in SQLite gespeichert.
 
-## Features
+## Komponenten
 
-### 1. Turniersetup
-- Pflege von Turniername, Logo, Datum und Startzeit.
-- Konfiguration zentraler Spielparameter wie Felder, Sets und Zeitdauern.
-- Verwaltung einer Mittagspause.
-- Passwortschutz fuer geschuetzte Bereiche.
-- Passwort aendern und aktive geschuetzte Session abmelden.
+- `turnierplaner`: Node.js-Backend, REST-API und Weboberflaeche auf Port `3000`.
+- `turnierplaner-timer-php`: PHP-Countdown und Spielanzeige auf Port `8080`.
+- `data/app.db`: aktive SQLite-Datenbank.
+- `Timer/sounds`: Sounddateien des Timers. Sie werden nicht in das Image kopiert,
+  sondern read-only vom Host in den Timer-Container gemountet.
 
-### 2. Teamverwaltung
-- Anlegen und Bearbeiten von Teams.
-- Pro Team getrennte Verfuegbarkeit als spielendes Team und als Schiedsrichter.
+Der PHP-Timer greift nicht direkt auf SQLite zu. Er liest Konfiguration und
+kommende Spiele ueber die Node-API.
 
-### 3. Turnierkonfiguration
-```bash
-TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t Timer
-```
-- Erstellen von Turnierphasen.
-- Konfiguration von Gruppen- und Match-basierten Bloecken.
-- Wahl und Persistenz des Wertungsmodus.
-- Verwaltung von Platzierungen.
+## Voraussetzungen
 
-### 4. Turnierplanung
-- Planung von Spielen ueber Phasen, Gruppen und Felder.
-- Bearbeitbare Spielplanung in der Planungsansicht.
-- Separate Spielplan-Ansicht als schreibgeschuetzte Uebersicht.
+- Linux oder WSL
+- Docker Engine mit Docker-Compose-Plugin
+- Git
+- Node.js und npm auf dem Rechner, auf dem das Node-Image gebaut wird
 
-### 5. Turnierdurchfuehrung
-- Ergebniseingabe pro Match inklusive Satzdaten.
-- Tabellarische Matchsicht fuer die laufende Durchfuehrung.
-
-### 6. Turnierergebnisse
-- Uebersicht der Ergebnisse je Phase.
-- Darstellung von Gruppentabellen, Matchlisten und Platzierungen.
-
-## Nutzung
-
-Ein sinnvoller Standardablauf ist:
-
-1. In Turniersetup alle Basisdaten und Zeitparameter hinterlegen.
-2. Teams erfassen und die Verfuegbarkeit setzen.
-3. Turnierphasen und Blockstruktur in der Turnierkonfiguration aufbauen.
-4. Wertungsmodus festlegen und Platzierungen konfigurieren.
-5. Spiele in der Spielplanung einteilen.
-6. In der Ergebniseingabe waehrend des Turniers Ergebnisse erfassen.
-7. In Turnierergebnisse die Gesamtuebersicht und Endstaende kontrollieren.
-- Read-only Datenfluss fuer PHP:
-- `Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
-- Stattdessen konsumiert PHP die Node-API: `/api/timer/upcoming-matches`.
-### Voraussetzungen
-- Node.js 18+ empfohlen.
-- npm.
-- Fuer WSL/Ubuntu bei nativen Modulen (sqlite3): `build-essential`, `python3`, `make`, `g++`.
-
-### Installation
-
-```bash
-npm install
-```
-
-WSL-Hinweis (falls sqlite3 Build-Fehler auftreten):
-
-```bash
-sudo apt update
-sudo apt install -y build-essential python3 make g++
-npm rebuild sqlite3
-```
-
-### Start
-
-```bash
-npm start
-```
-
-### Datenbank backup und wiederherstellen
-
-Das Backend erzeugt nach jeder Schreiboperation eine `data/app.backup.db`, welche als Backupdatei genutzt werden kann.
-
-Zudem prueft das Backend alle 15 Sekunden auf `data/app.restore.db`. Zum Wiederherstellen eine vollstaendige SQLite-Datei zuerst unter einem anderen Namen in das `data`-Verzeichnis kopieren und erst danach nach `app.restore.db` umbenennen. Das Backend ersetzt damit `app.db`, oeffnet die Datenbank neu und entfernt die Restore-Datei. Beim Restore wird kein neues `app.backup.db` erstellt.
-
-Die App ist danach standardmaessig erreichbar unter:
-
-```text
-http://localhost:3000
-```
-
-**Fuer die Entwicklung mit Timer (PHP-Server in separatem Terminal):**
-
-```bash
-TURNIERPLANER_API_BASE_URL='http://localhost:3000'; TURNIERPLANER_INTERNAL_API_BASE_URL='http://localhost:3000'; php -S 0.0.0.0:8080 -t Timer
-```
-
-Timer ist dann erreichbar unter `http://localhost:8080`.
-
-### Alternativer Port
-
-Du kannst einen eigenen Port setzen:
-
-```bash
-PORT=3001 npm start
-```
-
-### Wichtige Laufzeitinfos
-- Server-Entry-Point: `server.js`
-- Frontend: `public/`
-- SQLite-Datei: `data/app.db`
-- Startskripte: `npm start` und `npm run dev` (beide starten aktuell `node server.js`)
-
-### Docker
-
-Container bauen und starten:
-
-```bash
-docker compose up --build -d
-```
-
-Docker Compose-Services:
-- `turnierplaner`: Node API + Frontend auf Port `3000`.
-- `turnierplaner-timer-php`: PHP-Host fuer `Timer` auf Port `8080`.
-
-#### Image taggen und veroeffentlichen
-
-In `docker-compose.yml` muss beim Service `turnierplaner` der Image-Name auf den eigenen Docker-Hub-Benutzernamen zeigen:
-
-```yaml
-image: DEINUSERNAME/turnierplaner:${VERSION:-latest}
-```
-
-`DEINUSERNAME` in der Compose-Datei und in den folgenden Befehlen durch den eigenen Docker-Hub-Benutzernamen ersetzen. `VERSION` steuert den Versions-Tag. Unter PowerShell:
-
-```powershell
-$env:VERSION = "1.0.0"
-```
-
-Unter Bash/WSL:
-
-```bash
-export VERSION=1.0.0
-```
-
-Anschliessend anmelden, das Image mit dem Versions-Tag bauen, zusaetzlich als `latest` taggen und beide Tags pushen:
-
-```bash
-docker login
-docker compose build turnierplaner
-docker tag DEINUSERNAME/turnierplaner:1.0.0 DEINUSERNAME/turnierplaner:latest
-docker push DEINUSERNAME/turnierplaner:1.0.0
-docker push DEINUSERNAME/turnierplaner:latest
-```
-
-Fuer eine neue Version `VERSION` und die Versions-Tags in den Befehlen entsprechend anpassen. Ohne gesetzte `VERSION` verwendet Compose den Fallback-Tag `latest`.
-
-Read-only Datenfluss fuer PHP:
-- `Timer/get_upcoming_matches.php` liest keine SQLite-Datei direkt.
-- Stattdessen konsumiert PHP die Node-API: `/api/timer/upcoming-matches`.
-- API-Basis-URL wird ueber `TURNIERPLANER_API_BASE_URL` gesteuert.
-
-Reproduzierbarkeit im Build:
-- Das Node-Image kopiert die lokal installierten `node_modules` in den Container.
-- Das ist hier der robuste Workaround, weil die Container-Installation von npm in dieser Umgebung `express` unvollstaendig erzeugt.
-
-Aktueller Stand:
-- `docker compose up --build -d` startet Node und den PHP-Timer-Service erfolgreich.
-- Der Node-Service ist per Healthcheck abgesichert und der PHP-Service wartet auf einen healthy Node-Status.
-- Die Timer-Seite liest ihre Matchdaten ueber die Node-API statt direkt aus SQLite.
-
-Logs anzeigen:
-
-```bash
-docker compose logs -f
-```
-
-Container stoppen:
-
-```bash
-docker compose down
-```
-
-Hinweis zur Datenpersistenz:
-- Die SQLite-Datenbank wird ueber den lokalen Ordner `./data` nach `/app/data` gemountet.
-- Dadurch nutzt der Container dieselbe `data/app.db` wie die lokale App.
-
-### Deploy Runbook (WSL und Docker Compose)
-
-#### A) Lokale Nutzung in WSL mit npm start
-
-1. Voraussetzungen installieren (einmalig):
+Das Node-Image uebernimmt die lokal installierten `node_modules`. Vor dem ersten
+Build des Node-Containers daher im Projektverzeichnis ausfuehren:
 
 ```bash
 sudo apt update
 sudo apt install -y nodejs npm build-essential python3 make g++
-```
-
-2. Projekt starten:
-
-```bash
 npm install
-npm start
 ```
 
-3. Verifizieren:
+## 1. Node und Timer auf verschiedenen Rechnern
+
+In diesem Szenario laeuft das Node-Backend auf Rechner A und der Timer auf
+Rechner B. Der Timer erreicht das Backend ueber das Internet unter
+`https://otticup.akzimmer.de`.
+
+### Rechner A: Node-Backend
+
+Projekt bereitstellen, Abhaengigkeiten installieren und nur den Node-Service
+starten:
 
 ```bash
-curl http://localhost:3000/api/health
+cd /pfad/zu/turnierplaner
+npm install
+mkdir -p data
+docker compose build --pull turnierplaner
+docker compose up -d --no-deps turnierplaner
 ```
 
-4. Timer-Endpunkt testen:
+Lokalen Healthcheck ausfuehren:
 
 ```bash
-curl "http://localhost:3000/api/timer/upcoming-matches?limit=4"
+curl --fail http://localhost:3000/api/health
+curl --fail "http://localhost:3000/api/timer/upcoming-matches?limit=4"
 ```
 
-5. Timer PHP Server starten (in separatem Terminal):
+Der Reverse Proxy muss:
+
+- `https://otticup.akzimmer.de` per TLS bereitstellen,
+- Anfragen an das Node-Backend auf Port `3000` weiterleiten,
+- die Pfade `/api/timer/config` und `/api/timer/upcoming-matches` erreichbar
+  machen.
+
+Von Rechner B aus pruefen:
 
 ```bash
-cd /mnt/c/temp/vsv/Dokumente/familie/turnierplaner
-TURNIERPLANER_API_BASE_URL=http://localhost:3000 php -S 0.0.0.0:8080 -t Timer
+curl --fail https://otticup.akzimmer.de/api/health
+curl --fail "https://otticup.akzimmer.de/api/timer/upcoming-matches?limit=4"
 ```
 
-Timer verfuegbar unter: `http://localhost:8080/`
+### Rechner B: PHP-Timer
 
-#### B) Containerbetrieb mit Docker Compose (fuer Production/Deployment)
-
-1. Build und Start:
+Auf Rechner B werden nur das Timer-Image und der Soundordner benoetigt. Die
+beiden API-Variablen zeigen auf die oeffentliche HTTPS-Adresse des Backends:
 
 ```bash
+cd /pfad/zu/turnierplaner
+cat > .env <<'EOF'
+TURNIERPLANER_API_BASE_URL=https://otticup.akzimmer.de
+TURNIERPLANER_INTERNAL_API_BASE_URL=https://otticup.akzimmer.de
+EOF
+docker compose build --pull turnierplaner-timer-php
+docker compose up -d --no-deps turnierplaner-timer-php
+```
+
+Timer und API-Zugriff pruefen:
+
+```bash
+curl --fail --location http://localhost:8080/
+curl --fail http://localhost:8080/get_upcoming_matches.php
+```
+
+Der Timer ist unter `http://RECHNER-B:8080` erreichbar.
+
+Das Timer-Image installiert aktuelle CA-Zertifikate und die in dieser Umgebung
+benoetigte Zscaler Root CA aus `certificates/ZscalerRootCA.crt`. Die
+TLS-Zertifikatspruefung bleibt aktiviert.
+
+## 2. Beide Container auf demselben Rechner
+
+Beide Services laufen im selben Compose-Netzwerk. PHP erreicht Node intern ueber
+den Servicenamen `turnierplaner`; der Browser verwendet den veroeffentlichten
+Port `3000`.
+
+```bash
+cd /pfad/zu/turnierplaner
+npm install
+mkdir -p data
+
+cat > .env <<'EOF'
+TURNIERPLANER_API_BASE_URL=http://localhost:3000
+TURNIERPLANER_INTERNAL_API_BASE_URL=http://turnierplaner:3000
+EOF
+
 docker compose up --build -d
 ```
 
-2. Status pruefen:
+Services pruefen:
+
+```bash
+docker compose ps
+curl --fail http://localhost:3000/api/health
+curl --fail http://localhost:8080/get_upcoming_matches.php
+curl --fail --location http://localhost:8080/
+```
+
+Die Anwendungen sind lokal erreichbar unter:
+
+- Turnierplaner: `http://localhost:3000`
+- Timer: `http://localhost:8080`
+
+Wird der Timer von einem anderen Geraet im Netzwerk geoeffnet, darf
+`TURNIERPLANER_API_BASE_URL` nicht `localhost` enthalten. Stattdessen muss die
+vom Browser erreichbare Adresse des Docker-Rechners verwendet werden:
+
+```bash
+cat > .env <<'EOF'
+TURNIERPLANER_API_BASE_URL=http://192.168.1.10:3000
+TURNIERPLANER_INTERNAL_API_BASE_URL=http://turnierplaner:3000
+EOF
+docker compose up -d --force-recreate turnierplaner-timer-php
+```
+
+## Images auf Docker Hub veroeffentlichen
+
+Die Compose-Datei verwendet folgende Docker-Hub-Repositories:
+
+- `hajozi70/turnierplaner`
+- `hajozi70/turnierplaner-timer-php`
+
+Vor dem Push auf Docker Hub anmelden und einen Versions-Tag festlegen:
+
+```bash
+docker login
+export VERSION=1.0.0
+```
+
+Beide fertigen Images mit diesem Tag bauen und pushen:
+
+```bash
+npm install
+docker compose build --pull turnierplaner turnierplaner-timer-php
+docker compose push turnierplaner turnierplaner-timer-php
+```
+
+Dies veroeffentlicht:
+
+```text
+hajozi70/turnierplaner:1.0.0
+hajozi70/turnierplaner-timer-php:1.0.0
+```
+
+Nach erfolgreichem Push dieselben Images optional zusaetzlich als `latest`
+veroeffentlichen:
+
+```bash
+docker tag "hajozi70/turnierplaner:${VERSION}" \
+  hajozi70/turnierplaner:latest
+docker tag "hajozi70/turnierplaner-timer-php:${VERSION}" \
+  hajozi70/turnierplaner-timer-php:latest
+
+docker push hajozi70/turnierplaner:latest
+docker push hajozi70/turnierplaner-timer-php:latest
+```
+
+Auf einem Zielrechner eine bestimmte Version herunterladen und ohne lokalen
+Build starten:
+
+```bash
+export VERSION=1.0.0
+docker compose pull turnierplaner turnierplaner-timer-php
+docker compose up -d --no-build
+```
+
+Soll auf einem getrennten Timer-Rechner nur das Timer-Image aktualisiert werden:
+
+```bash
+export VERSION=1.0.0
+docker compose pull turnierplaner-timer-php
+docker compose up -d --no-deps --no-build turnierplaner-timer-php
+```
+
+## Betrieb
+
+Status und Logs anzeigen:
 
 ```bash
 docker compose ps
 docker compose logs -f turnierplaner
+docker compose logs -f turnierplaner-timer-php
 ```
 
-3. Healthcheck pruefen:
+Services neu bauen:
 
 ```bash
-curl http://localhost:3000/api/health
+docker compose build --pull turnierplaner
+docker compose build --pull turnierplaner-timer-php
+docker compose up -d
 ```
 
-4. App verfuegbar unter:
-   - Node App: `http://localhost:3000`
-   - Timer: `http://localhost:8080`
-     - PHP-Timer pruefen:
-```bash
-curl http://localhost:8080/get_upcoming_matches.php
-```
-
-5. Stoppen:
+Container stoppen und entfernen:
 
 ```bash
 docker compose down
 ```
 
-## Offene Punkte
+## Daten und Backup
 
-Die folgenden Punkte sind als moegliche Weiterentwicklungen sinnvoll:
+Der lokale Ordner `data` wird nach `/app/data` in den Node-Container gemountet.
+Dadurch bleiben Daten beim Ersetzen des Containers erhalten.
 
-- konfigurierte Turnierpause beim Spielplan direkt beachten
-- Automatisierte Tests fuer zentrale Workflows (API, Planung, Ergebniseingabe).
-- Exportfunktionen fuer Spielplan und Ergebnisse (z. B. CSV/PDF).
-- Bessere Rollen-/Rechteverwaltung statt globalem Passwortschutz.
-- Verbesserte Validierung und Fehlermeldungen fuer komplexe Turnierkonfigurationen.
-- Deployment- und Backup-Strategie fuer produktive Nutzung.
+Nach Schreiboperationen erzeugt das Backend `data/app.backup.db`. Fuer eine
+Wiederherstellung eine vollstaendige SQLite-Datei zuerst unter einem temporaeren
+Namen nach `data` kopieren und anschliessend atomar umbenennen:
+
+```bash
+cp /pfad/zum/backup.db data/app.restore.db.tmp
+mv data/app.restore.db.tmp data/app.restore.db
+```
+
+Das Backend erkennt `app.restore.db`, ersetzt damit `app.db` und entfernt die
+Restore-Datei.
 
 ## Lizenz
 
-Dieses Projekt steht unter der Apache License 2.0.
-
-Freie Nutzung, Veraenderung und Weitergabe sind erlaubt, sofern die Lizenz und die
-Autorenangabe erhalten bleiben.
-
-Volltext: siehe Datei LICENSE.
-
-Zusaetzliche Attribution: siehe Datei NOTICE.
+Dieses Projekt steht unter der Apache License 2.0. Details stehen in `LICENSE`
+und `NOTICE`.

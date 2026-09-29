@@ -4606,7 +4606,7 @@ mobileQuery.addEventListener("change", () => {
 });
 
 updateProtectedMenuVisibility();
-void openView(loadPersistedActiveViewName() || getDefaultViewName());
+void openView("turnieruebersicht");
 initializeTournamentSettings();
 initializeScoringMode();
 // Teams must finish before phases so persistedTeams is available for gruppe editors.

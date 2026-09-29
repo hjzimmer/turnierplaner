@@ -10,17 +10,39 @@ $soundConfig = [];
 $defaultStart = 600;
 $log = '';
 $timerApiBaseUrl = getenv('TURNIERPLANER_API_BASE_URL');
-if (!is_string($timerApiBaseUrl) || trim($timerApiBaseUrl) === '') {
+$timerApiBaseUrlFromEnvironment = is_string($timerApiBaseUrl) && trim($timerApiBaseUrl) !== '';
+if (!$timerApiBaseUrlFromEnvironment) {
     $timerApiBaseUrl = 'http://localhost:3000';
 }
 
 $timerInternalApiBaseUrl = getenv('TURNIERPLANER_INTERNAL_API_BASE_URL');
-if (!is_string($timerInternalApiBaseUrl) || trim($timerInternalApiBaseUrl) === '') {
+$timerInternalApiBaseUrlFromEnvironment = is_string($timerInternalApiBaseUrl) && trim($timerInternalApiBaseUrl) !== '';
+if (!$timerInternalApiBaseUrlFromEnvironment) {
     $timerInternalApiBaseUrl = 'http://localhost:3000';
 }
 
 $configApiUrl = rtrim($timerInternalApiBaseUrl, '/') . '/api/timer/config';
+$matchesApiUrl = rtrim($timerInternalApiBaseUrl, '/') . '/api/timer/upcoming-matches?limit=4';
 $jsonContent = @file_get_contents($configApiUrl);
+$configApiStatus = $jsonContent === false ? 'Request failed' : 'Request succeeded';
+$responseHeaders = function_exists('http_get_last_response_headers')
+    ? http_get_last_response_headers()
+    : (get_defined_vars()['http_response_header'] ?? []);
+
+if (isset($responseHeaders[0]) && preg_match('/\s(\d{3})\s/', $responseHeaders[0], $statusMatches)) {
+    $configApiStatus = 'HTTP ' . $statusMatches[1];
+}
+
+$phpHttpCapabilities = sprintf(
+    'allow_url_fopen=%s; OpenSSL=%s; cURL=%s',
+    ini_get('allow_url_fopen') ? 'enabled' : 'disabled',
+    extension_loaded('openssl') ? 'enabled' : 'disabled',
+    extension_loaded('curl') ? 'enabled' : 'disabled'
+);
+
+if ($jsonContent === false && str_starts_with(strtolower($configApiUrl), 'https://') && !extension_loaded('openssl')) {
+    $configApiStatus = 'Request failed: PHP OpenSSL extension is unavailable';
+}
 
 if ($jsonContent !== false) {
     $config = json_decode($jsonContent, true);
@@ -208,6 +230,82 @@ function parseTimeValue($value) {
         .status-indicator.paused {
             display: block;
             color: #FF9800;
+        }
+
+        .debug-panel {
+            position: fixed;
+            top: 76px;
+            right: 20px;
+            z-index: 1000;
+            width: min(520px, calc(100vw - 40px));
+            max-height: calc(100vh - 96px);
+            overflow: auto;
+            background-color: rgba(18, 18, 18, 0.97);
+            border: 1px solid #666;
+            border-radius: 6px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+            color: #eee;
+            font-size: 13px;
+        }
+
+        .debug-panel[hidden] {
+            display: none;
+        }
+
+        .debug-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 12px;
+            border-bottom: 1px solid #444;
+        }
+
+        .debug-panel-header h2 {
+            margin: 0;
+            font-size: 15px;
+            letter-spacing: 0;
+        }
+
+        .debug-panel-close {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: #fff;
+            font-size: 24px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .debug-panel-body {
+            display: grid;
+            grid-template-columns: minmax(130px, auto) minmax(0, 1fr);
+            gap: 8px 12px;
+            padding: 12px;
+        }
+
+        .debug-panel-label {
+            color: #aaa;
+        }
+
+        .debug-panel-value {
+            margin: 0;
+            color: #81c784;
+            font-family: Consolas, monospace;
+            overflow-wrap: anywhere;
+        }
+
+        @media (max-width: 600px) {
+            .debug-panel-body {
+                grid-template-columns: 1fr;
+                gap: 4px;
+            }
+
+            .debug-panel-value {
+                margin-bottom: 8px;
+            }
         }
         
         .alert-info {
@@ -428,12 +526,40 @@ function parseTimeValue($value) {
             <button class="btn-start" id="startBtn" onclick="startTimer()">▶️ Start</button>
             <button class="btn-pause" id="pauseBtn" onclick="pauseTimer()" disabled>⏸️ Pause</button>
             <button class="btn-reset" onclick="resetTimer()">🔄 Reset</button>
+            <button type="button" id="debugBtn">Debug</button>
         </div>
     </div>
     
     <div class="alert-info" id="alertInfo"></div>
     
     <div class="status-indicator" id="statusIndicator">⏸️ Pausiert</div>
+
+    <section class="debug-panel" id="debugPanel" aria-labelledby="debugPanelTitle" hidden>
+        <div class="debug-panel-header">
+            <h2 id="debugPanelTitle">API-Debug</h2>
+            <button type="button" class="debug-panel-close" id="debugCloseBtn" aria-label="Debugfenster schließen">&times;</button>
+        </div>
+        <div class="debug-panel-body">
+            <span class="debug-panel-label">Public API Base</span>
+            <code class="debug-panel-value" id="debugPublicApiBase"></code>
+            <span class="debug-panel-label">Public URL source</span>
+            <code class="debug-panel-value" id="debugPublicApiSource"></code>
+            <span class="debug-panel-label">Internal API Base</span>
+            <code class="debug-panel-value" id="debugInternalApiBase"></code>
+            <span class="debug-panel-label">Internal URL source</span>
+            <code class="debug-panel-value" id="debugInternalApiSource"></code>
+            <span class="debug-panel-label">Config endpoint</span>
+            <code class="debug-panel-value" id="debugConfigApiUrl"></code>
+            <span class="debug-panel-label">Config GET status</span>
+            <code class="debug-panel-value" id="debugConfigApiStatus"></code>
+            <span class="debug-panel-label">PHP HTTP support</span>
+            <code class="debug-panel-value" id="debugPhpHttpSupport"></code>
+            <span class="debug-panel-label">Matches endpoint</span>
+            <code class="debug-panel-value" id="debugMatchesApiUrl"></code>
+            <span class="debug-panel-label">Matches GET status</span>
+            <code class="debug-panel-value" id="debugMatchesApiStatus">Pending</code>
+        </div>
+    </section>
     
     <div class="countdown-display" id="countdownDisplay">00:00</div>
     
@@ -447,6 +573,47 @@ function parseTimeValue($value) {
         // Sound-Konfiguration aus PHP
         const soundConfig = <?php echo json_encode($soundConfig); ?>;
         const timerApiBaseUrl = <?php echo json_encode(rtrim($timerApiBaseUrl, '/')); ?>;
+        const timerInternalApiBaseUrl = <?php echo json_encode(rtrim($timerInternalApiBaseUrl, '/')); ?>;
+        const timerApiBaseUrlSource = <?php echo json_encode($timerApiBaseUrlFromEnvironment ? 'Environment' : 'Fallback'); ?>;
+        const timerInternalApiBaseUrlSource = <?php echo json_encode($timerInternalApiBaseUrlFromEnvironment ? 'Environment' : 'Fallback'); ?>;
+        const timerConfigApiUrl = <?php echo json_encode($configApiUrl); ?>;
+        const timerConfigApiStatus = <?php echo json_encode($configApiStatus); ?>;
+        const timerPhpHttpSupport = <?php echo json_encode($phpHttpCapabilities); ?>;
+        const timerMatchesApiUrl = <?php echo json_encode($matchesApiUrl); ?>;
+
+        /**
+         * Updates one value in the API debug panel.
+         * @param {string} elementId ID of the debug value element.
+         * @param {string} value Value to display.
+         * @returns {void}
+         */
+        function setTimerDebugValue(elementId, value) {
+            const element = document.getElementById(elementId);
+            if (element) {
+                element.textContent = value;
+            }
+        }
+
+        /**
+         * Shows or hides the API debug panel.
+         * @param {boolean} isOpen Whether the panel should be visible.
+         * @returns {void}
+         */
+        function setTimerDebugPanelOpen(isOpen) {
+            document.getElementById('debugPanel').hidden = !isOpen;
+        }
+
+        setTimerDebugValue('debugPublicApiBase', timerApiBaseUrl);
+        setTimerDebugValue('debugPublicApiSource', timerApiBaseUrlSource);
+        setTimerDebugValue('debugInternalApiBase', timerInternalApiBaseUrl);
+        setTimerDebugValue('debugInternalApiSource', timerInternalApiBaseUrlSource);
+        setTimerDebugValue('debugConfigApiUrl', timerConfigApiUrl);
+        setTimerDebugValue('debugConfigApiStatus', timerConfigApiStatus);
+        setTimerDebugValue('debugPhpHttpSupport', timerPhpHttpSupport);
+        setTimerDebugValue('debugMatchesApiUrl', timerMatchesApiUrl);
+
+        document.getElementById('debugBtn').addEventListener('click', () => setTimerDebugPanelOpen(true));
+        document.getElementById('debugCloseBtn').addEventListener('click', () => setTimerDebugPanelOpen(false));
         
         let startSeconds = <?php echo $defaultStart; ?>;
         let currentTime = startSeconds;
@@ -1033,19 +1200,36 @@ function parseTimeValue($value) {
             });
         }
         
-        // Lade Match-Daten aus der Datenbank
+        /**
+         * Loads upcoming matches through the local PHP proxy and updates the debug status.
+         * @returns {Promise<void>} Resolves after the request and UI update finish.
+         */
         async function loadUpcomingMatches() {
+            const proxyUrl = new URL('get_upcoming_matches.php', window.location.href).href;
+            setTimerDebugValue('debugMatchesApiStatus', `Requesting via ${proxyUrl}`);
+
             try {
                 const response = await fetch('get_upcoming_matches.php');
                 const matches = await response.json();
                 
-                if (matches.error) {
-                    console.error('Fehler beim Laden der Matches:', matches.error);
+                if (!response.ok || matches.error) {
+                    const errorMessage = matches.error || response.statusText || 'Unknown error';
+                    const upstreamUrl = matches.apiUrl || timerMatchesApiUrl;
+                    setTimerDebugValue(
+                        'debugMatchesApiStatus',
+                        `HTTP ${response.status}: ${errorMessage}; upstream ${upstreamUrl}`
+                    );
+                    console.error('Fehler beim Laden der Matches:', errorMessage);
                     return;
                 }
                 
+                setTimerDebugValue(
+                    'debugMatchesApiStatus',
+                    `HTTP ${response.status}; upstream ${timerMatchesApiUrl}`
+                );
                 updateMatchInfo(matches);
             } catch (error) {
+                setTimerDebugValue('debugMatchesApiStatus', `Request failed via ${proxyUrl}: ${error.message}`);
                 console.error('Fehler beim Laden der Matches:', error);
             }
         }

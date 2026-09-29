@@ -30,16 +30,16 @@ services:
       start_period: 10s
 
   turnierplaner-timer-php:
-    image: php:8.2-apache
+    build:
+      context: .
+      dockerfile: Dockerfile.timer
+    image: hajozi70/turnierplaner-timer-php:${VERSION:-latest}
     container_name: turnierplaner-timer-php
-    depends_on:
-      turnierplaner:
-        condition: service_healthy
     ports:
       - "8080:80"
     volumes:
-      - ./Timer:/var/www/html:ro
+      - ./Timer/sounds:/var/www/html/sounds:ro
     restart: unless-stopped
     environment:
-      TURNIERPLANER_API_BASE_URL: http://localhost:3000
-      TURNIERPLANER_INTERNAL_API_BASE_URL: http://turnierplaner:3000
+      TURNIERPLANER_API_BASE_URL: ${TURNIERPLANER_API_BASE_URL:-https://otticup.akzimmer.de}
+      TURNIERPLANER_INTERNAL_API_BASE_URL: ${TURNIERPLANER_INTERNAL_API_BASE_URL:-https://otticup.akzimmer.de}

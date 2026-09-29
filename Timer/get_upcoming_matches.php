@@ -35,8 +35,11 @@ if (function_exists('curl_init')) {
         ],
     ]);
     $responseBody = @file_get_contents($url, false, $context);
-    if (isset($http_response_header[0])) {
-        if (preg_match('/\s(\d{3})\s/', $http_response_header[0], $matches)) {
+    $responseHeaders = function_exists('http_get_last_response_headers')
+        ? http_get_last_response_headers()
+        : (get_defined_vars()['http_response_header'] ?? []);
+    if (isset($responseHeaders[0])) {
+        if (preg_match('/\s(\d{3})\s/', $responseHeaders[0], $matches)) {
             $httpCode = (int) $matches[1];
         }
     }
